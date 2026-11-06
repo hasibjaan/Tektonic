@@ -2,7 +2,14 @@
 
 **Where:** a fresh `git clone https://github.com/hasibjaan/Tektonic.git` of commit **`1ef9754`** into a new folder outside the repository (`outcome/clean-clone-phase9/`), on the team's laptop: Intel i5-8259U, 8 GB RAM, macOS 15.8.1, Python 3.13.9, internal SSD (APFS), other apps open. Every command was run in the clone **exactly as the judge would type it** (`./torture …`), with seeds never used before. Raw outputs: `evidence/final/`.
 
-**Network:** these runs were made ONLINE (the clone came from GitHub). The offline run — Wi-Fi off — is `tools/phase9_offline.sh`; its result goes to `evidence/final/offline-clean-clone.txt` (**NOT RUN yet** at the time of writing: it needs a team member to switch Wi-Fi off).
+**Network:** the runs in the tables below were made ONLINE (the clone came from GitHub). The **offline** run was made by a team member on 2026-11-07 with Wi-Fi switched off: `sh tools/phase9_offline.sh` (raw output `evidence/final/offline-clean-clone.txt`). It confirmed `github.com` was not reachable, then made a local clone of commit **`ab40ae2`** into a new folder:
+
+| Step, Wi-Fi OFF | Result | Time |
+|---|---|---|
+| `python3 -m compileall -q .` (the README build command) | exit 0 | 0.42 s |
+| `python3 tools/check_imports.py` | `OK` | 0.41 s |
+| `python3 -m unittest discover -s tests` | Ran 119 tests, OK | 29.5 s |
+| `./torture --iterations 200 --seed 990011` | **PASS 200/200**, a request in flight at 200/200 kills | 169.4 s |
 
 ## Build and checks in the clone
 

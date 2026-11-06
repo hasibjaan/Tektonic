@@ -9,3 +9,8 @@ rehearsal/
 CLAUDE_CODE_MASTER_PROMPT_PYTHON.md
 # Database copies saved as evidence of a failure ARE committed
 !evidence/**/*.kv
+# Side files of a database <name>.kv (lock, snapshot, temporary files)
+*.kv.lock
+*.kv.idx
+*.kv.idx.tmp
+*.kv.compact.tmp

@@ -1,0 +1,38 @@
+# Phase 9 step 1: clean clone, build and checks with the network OFF
+# Command: sh tools/phase9_offline.sh
+# Started 2026-11-07 00:28:45 IST on 15.8.1
+
+--- 1. network check (must NOT reach github.com):
+github.com not reachable: the network is off.
+
+--- 2. git clone of the local repository into /Users/apple/Documents/Hackathons/srinathon 3.0/outcome/offline-clone-20261107-002845
+real 0.60
+user 0.05
+sys 0.44
+cloned commit: ab40ae2
+
+--- 3. $ python3 -m compileall -q .     (the README build command)
+real 0.42
+user 0.26
+sys 0.12
+exit=0
+--- $ python3 tools/check_imports.py
+OK
+real 0.41
+user 0.33
+sys 0.04
+exit=0
+
+--- 4. $ python3 -m unittest discover -s tests
+Ran 119 tests in 29.519s
+
+OK
+--- $ ./torture --iterations 200 --seed 990011
+PASS 200/200
+kills with at least one request in flight: 200/200 (100.0%)
+average iteration 0.84 s; projected 200 iterations: 169 s
+real 169.37
+user 110.29
+sys 41.18
+
+# Finished 2026-11-07 00:32:06 IST
