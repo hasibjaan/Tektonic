@@ -161,3 +161,107 @@ class Oracle:
             lines.append("  every key matches one of the two states, but not the SAME one: "
                          "request {} is partly applied".format(m.pending[0]))
         return lines
+
+
+class OverlapOracle:
+    """Oracle for the overlapping-key workload (Phase 7): every writer uses the same
+    small key set; each request is ONE put or delete on one key; each writer has at
+    most one request in flight.
+
+    The tester's own clock ticks when a request is sent and when its reply arrives.
+    Request B is definitely later than A if B was sent after A's ACK arrived. For
+    each key, the final value must be the effect of a request that no later ACKed
+    request could have replaced:
+      - an ACKed request A is a candidate if no other ACKed request on that key was
+        sent after A's ACK;
+      - an unanswered request is a candidate (it may have been applied at any time
+        after it was sent) — if chosen, it was applied;
+      - the value from before this iteration is a candidate if no request on the key
+        was ACKed in this iteration.
+    Checking key by key is enough because every request touches one key
+    (linearizability is a local property). Values are unique per request, so a
+    match identifies the request. After a pass the oracle keeps that candidate's
+    value — its own copy, never the dump's.
+    """
+
+    def __init__(self, log_path, writer_ids, keys):
+        self.log = open(log_path, "a", encoding="utf-8")
+        self.models = {w: None for w in writer_ids}      # the writer ids the dispatcher accepts
+        self.all_keys = frozenset(keys)
+        self.state = {}                                  # decided value per key before this iteration
+        self.lock = threading.Lock()
+        self.acks = 0
+        self.clock = 0
+        self.ops = {}                                    # rid -> request record, this iteration
+        self.pending = {}                                # wid -> rid in flight
+
+    def note(self, text):
+        self.log.write(text + "\n")
+        self.log.flush()
+
+    def sent(self, wid, rid, effects, summary):
+        with self.lock:
+            if self.pending.get(wid) is not None:
+                raise AssertionError("writer {} already has {} in flight".format(wid, self.pending[wid]))
+            kind, key, value = effects[0]
+            self.clock += 1
+            self.ops[rid] = {"rid": rid, "kind": kind, "key": key, "value": value,
+                             "sent": self.clock, "acked": None, "err": None}
+            self.pending[wid] = rid
+            self.note("SEND {} {} t={}".format(rid, summary, self.clock))
+
+    def acked(self, wid, rid):
+        with self.lock:
+            if self.pending.get(wid) != rid:
+                raise AssertionError("ACK for {} which is not in flight".format(rid))
+            self.clock += 1
+            self.ops[rid]["acked"] = self.clock
+            self.pending[wid] = None
+            self.acks += 1
+            self.note("ACK {} t={}".format(rid, self.clock))
+
+    def erred(self, wid, rid, reason):
+        with self.lock:
+            if self.pending.get(wid) != rid:
+                raise AssertionError("ERR for {} which is not in flight".format(rid))
+            self.ops[rid]["err"] = reason
+            self.pending[wid] = None
+            self.note("ERR {} {}".format(rid, reason))
+
+    def in_flight(self):
+        with self.lock:
+            return sum(1 for r in self.pending.values() if r is not None)
+
+    def verify(self, dump):
+        problems = []
+        with self.lock:
+            for key in sorted(dump):
+                if key not in self.all_keys:
+                    problems.append("key {} = {} was never written by any writer".format(short(key), short(dump[key])))
+            decided = {}
+            for key in sorted(self.all_keys):
+                ops = [o for o in self.ops.values() if o["key"] == key
+                       and (o["err"] is None or o["err"].startswith("DatabaseFailed"))]
+                acked = [o for o in ops if o["acked"] is not None]
+                candidates = []
+                for o in ops:
+                    if o["acked"] is None or not any(o2 is not o and o2["sent"] > o["acked"] for o2 in acked):
+                        candidates.append((o["rid"], o["value"] if o["kind"] == "put" else None))
+                if not acked:
+                    candidates.append(("<before this iteration>", self.state.get(key)))
+                found = dump.get(key)
+                match = [rid for rid, value in candidates if value == found]
+                if not match:
+                    problems.append("key {}: found {} but the only possible final values are: {}".format(
+                        short(key), short(found),
+                        "; ".join("{} -> {}".format(rid, short(v)) for rid, v in candidates) or "none"))
+                else:
+                    decided[key] = next(v for rid, v in candidates if v == found)
+                    self.note("DECIDED {} = from {}".format(key.decode("ascii", "replace"), " or ".join(match)))
+            if problems:
+                return problems
+            self.state = {k: v for k, v in decided.items() if v is not None}
+            self.ops = {}
+            self.pending = {w: None for w in self.pending}
+            self.note("PASS")
+        return problems

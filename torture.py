@@ -2,6 +2,8 @@
 
     python3 torture.py --iterations 500 --seed 12345
     python3 torture.py --iterations 100 --seed 999 --mode large-values
+    python3 torture.py --iterations 100 --seed 7 --mode compaction
+    python3 torture.py --iterations 100 --seed 42 --mode recovery-crash
     python3 torture.py --iterations 3 --seed 5 --mode targeted
     python3 torture.py --seed 1 --mode scale --keys 1000000
 
@@ -11,7 +13,7 @@ Linux — after a random delay in milliseconds from random.Random(seed). This
 program never imports the engine (tools/check_imports.py proves it).
 
 Exit codes: 0 every iteration passed · 1 a failure (details saved under
-evidence/failures/) · 2 usage error or a mode that is not implemented yet.
+evidence/failures/) · 2 usage error.
 """
 import argparse
 import os
@@ -20,12 +22,9 @@ import sys
 from tester import modes
 
 REPO = os.path.dirname(os.path.abspath(__file__))
-RANDOM_MODES = ("default", "large-values", "large-batches")
-LATER_MODES = {
-    "recovery-crash": "Phase 7 (kill while open is running, repeatedly)",
-    "compaction": "Phase 7 (the engine has no compaction yet)",
-    "disk-full": "Phase 7 (small --max-bytes, clean errors)",
-}
+RANDOM_MODES = ("default", "large-values", "large-batches", "compaction", "recovery-crash",
+                "disk-full", "overlap")
+LATER_MODES = {}
 
 
 def build_parser():

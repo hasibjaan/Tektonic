@@ -189,7 +189,10 @@ def fail(run, iteration, problems, db_after_kill, db, oracle_log):
     return 1
 
 
-def make_dispatch(oracle, writers_by_id, run):
+def make_dispatch(oracle, writers_by_id, run, allowed_errors=()):
+    """Replies from serve's stdout -> the oracle. An ERR is allowed only if its reason
+    starts with one of allowed_errors (disk-full: SizeCapReached); any other ERR, and
+    any reply that breaks the protocol, is a FAIL — never silently ignored."""
     def dispatch(line):
         parts = line.split(" ", 2)
         if len(parts) < 2 or parts[0] not in ("ACK", "ERR", "VAL", "NOTFOUND"):
@@ -204,39 +207,92 @@ def make_dispatch(oracle, writers_by_id, run):
             if parts[0] == "ACK":
                 oracle.acked(wid, rid)
             elif parts[0] == "ERR":
-                oracle.erred(wid, rid, parts[2] if len(parts) > 2 else "")
+                reason = parts[2] if len(parts) > 2 else ""
+                oracle.erred(wid, rid, reason)
+                run.err_counts[reason.split(":")[0]] = run.err_counts.get(reason.split(":")[0], 0) + 1
+                if not reason.startswith(tuple(allowed_errors)) or not allowed_errors:
+                    raise ValueError("unexpected ERR (not a clean, allowed refusal): {}".format(reason[:120]))
         except Exception as exc:                          # a protocol break is a FAIL, never silent
             run.protocol_errors.append("reply {!r}: {}".format(line[:120], exc))
-            return
+            if parts[0] != "ERR":
+                return
         writer = writers_by_id.get(wid)
         if writer is not None:
             writer.replied.set()
     return dispatch
 
 
-# ---- random kills: modes default, large-values, large-batches -------------------------
+def prefill(run, db, oracle, keys):
+    """Writer 0 writes `keys` through serve in batches of 10,000 (each one ACKed and
+    recorded by the oracle like any other request), then serve is hard-killed."""
+    replies = queue.Queue()
+    child = Child(run.kvdb, db, replies.put)
+    child.wait_stderr("READY")
+    for n, start in enumerate(range(0, len(keys), 10_000)):
+        chunk = keys[start:start + 10_000]
+        rid = "w0-{}".format(n + 1)
+        effects = [("put", k, b"prefill." + k) for k in chunk]
+        oracle.sent(0, rid, effects, "prefill batch of {}".format(len(chunk)))
+        child.send(b"".join([b"%s batch %d\n" % (rid.encode(), len(chunk))] +
+                            [b"put %s %s\n" % (k, v) for _, k, v in effects]))
+        line = replies.get(timeout=TIMEOUT)
+        if line != "ACK " + rid:
+            raise SystemExit("prefill failed: {}".format(line))
+        oracle.acked(0, rid)
+    child.kill()
+
+
+def kill_phase(child):
+    """Where a restarted serve was when it was killed, from its own stderr."""
+    lines = child.stderr_lines
+    if any(l.startswith("READY") for l in lines):
+        return "after-ready"
+    if any(l.startswith("PID") for l in lines):
+        return "during-recovery"
+    return "before-start"
+
+
+# ---- random kills: default, large-values, large-batches, compaction, recovery-crash, ----
+# ---- disk-full, overlap ------------------------------------------------------------------
 
 def run_random(args):
     profile = PROFILES[args.mode]
     profile.writers = args.writers
     run = Run(args, args.mode)
+    run.err_counts = {}
     db = os.path.join(run.dir, "db.kv")
     oracle_log = os.path.join(run.dir, "oracle.log")
-    oracle = Oracle(oracle_log, writer_keys(profile))
+    if profile.shared_keys:
+        from tester.oracle import OverlapOracle
+        from tester.workload import shared_key
+        oracle = OverlapOracle(oracle_log, list(range(1, profile.writers + 1)),
+                               [shared_key(j) for j in range(profile.shared_keys)])
+    else:
+        oracle = Oracle(oracle_log, writer_keys(profile))
     master = random.Random(args.seed)                     # the ONLY source of randomness
     seqs = {w: 0 for w in range(1, profile.writers + 1)}
-    passes = with_inflight = 0
+    passes = with_inflight = in_compaction = 0
+    phases = {"before-start": 0, "during-recovery": 0, "after-ready": 0}
     times = []
     print("torture: mode {} seed {} iterations {} writers {} kvdb {}".format(
         args.mode, args.seed, args.iterations, profile.writers, os.path.relpath(run.kvdb, REPO)))
+    if profile.max_bytes:                                 # disk-full: the cap is set at creation
+        code, out, err = run_cli(run.kvdb, "open", db, "--max-bytes", str(profile.max_bytes))
+        print("created the database with --max-bytes {}: {}".format(profile.max_bytes, out.strip()))
+        if code != 0:
+            return fail(run, 0, ["could not create the capped database: " + out], None, db, oracle_log)
+    if profile.prefill:
+        prefill(run, db, oracle, writer_keys(profile)[0])
+        print("prefilled {:,} keys through serve (writer 0, ACKed batches)".format(profile.prefill))
     for it in range(1, args.iterations + 1):
         started = time.monotonic()
         delay = master.uniform(*profile.delay_ms)
         rngs = {w: random.Random(master.getrandbits(64)) for w in seqs}
+        restarts = [master.uniform(*profile.restart_ms) for _ in range(profile.restart_kills)]
         writers_by_id = {}
         stop = threading.Event()
         oracle.note("ITERATION {} kill_delay_ms {:.1f}".format(it, delay))
-        child = Child(run.kvdb, db, make_dispatch(oracle, writers_by_id, run))
+        child = Child(run.kvdb, db, make_dispatch(oracle, writers_by_id, run, profile.allowed_errors))
         try:
             child.wait_stderr("READY")
         except ChildGone as exc:
@@ -252,22 +308,37 @@ def run_random(args):
         for wr in writers_by_id.values():
             wr.join(timeout=TIMEOUT)
             seqs[wr.wid] = wr.seq
+        compact_lines = [l for l in child.stderr_lines if l.startswith("COMPACT")]
+        compacting = bool(compact_lines) and compact_lines[-1] == "COMPACT begin"
+        in_compaction += compacting
         in_flight = oracle.in_flight()
         with_inflight += in_flight > 0
-        run.trace("KILL iteration {} exit {} in_flight {}".format(it, code, in_flight))
+        run.trace("KILL iteration {} exit {} in_flight {} compacting {}".format(it, code, in_flight, compacting))
         after_kill = os.path.join(run.dir, "db-after-kill.kv")
         if os.path.exists(db):                            # a broken engine may never create the file
             shutil.copyfile(db, after_kill)
         else:
             after_kill = None
             run.trace("no database file after the kill")
+        extra = ""
+        for ms in restarts:                               # recovery-crash: kill serve WHILE it opens
+            again = Child(run.kvdb, db, lambda line: None)
+            time.sleep(ms / 1000.0)
+            again.kill()
+            phase = kill_phase(again)
+            phases[phase] += 1
+            extra += " " + {"before-start": "s", "during-recovery": "R", "after-ready": "a"}[phase]
+            run.trace("RESTART-KILL after {:.1f} ms: {}".format(ms, phase))
         dump, problem = read_back(run.kvdb, db)
         problems = list(run.protocol_errors) or ([problem] if problem else oracle.verify(dump))
+        if not problems and profile.max_bytes and os.path.getsize(db) > profile.max_bytes:
+            problems = ["file is {} bytes, over max_bytes {}".format(os.path.getsize(db), profile.max_bytes)]
         seconds = time.monotonic() - started
         times.append(seconds)
         status = "FAIL" if problems else "PASS"
-        print("iter {:>4} seed {} kill_ms {:>6.1f} in_flight {} acks {:>6} keys {:>4} {} ({:.2f} s)".format(
-            it, args.seed, delay, in_flight, oracle.acks, len(dump) if dump is not None else -1, status, seconds))
+        tags = (" compacting" if compacting else "") + (" restarts" + extra if restarts else "")
+        print("iter {:>4} seed {} kill_ms {:>6.1f} in_flight {} acks {:>6} keys {:>5}{} {} ({:.2f} s)".format(
+            it, args.seed, delay, in_flight, oracle.acks, len(dump) if dump is not None else -1, tags, status, seconds))
         sys.stdout.flush()
         if code != -9 and os.name != "nt":
             problems = problems or ["the child was not killed by SIGKILL (exit {})".format(code)]
@@ -278,6 +349,13 @@ def run_random(args):
     print("PASS {}/{}".format(passes, args.iterations))
     print("kills with at least one request in flight: {}/{} ({:.1f}%)".format(
         with_inflight, args.iterations, 100.0 * with_inflight / args.iterations))
+    if profile.p_compact:
+        print("kills that landed DURING a compaction: {}/{}".format(in_compaction, args.iterations))
+    if profile.restart_kills:
+        print("extra kills of a restarted serve: {} before Python started main, {} DURING recovery, "
+              "{} after READY".format(phases["before-start"], phases["during-recovery"], phases["after-ready"]))
+    if run.err_counts:
+        print("ERR replies by reason: " + ", ".join("{} {}".format(k, v) for k, v in sorted(run.err_counts.items())))
     print("average iteration {:.2f} s; projected 200 iterations: {:.0f} s".format(avg, 200 * avg))
     return 0
 
@@ -321,9 +399,6 @@ def run_targeted(args):
     master = random.Random(args.seed)
     for rnd in range(1, args.iterations + 1):
         for point in PAUSE_POINTS:
-            if point.startswith("compact."):
-                results.append((rnd, point, "NOT TESTED", "compaction is not implemented yet (Phase 7)"))
-                continue
             if point.startswith("snapshot."):
                 results.append((rnd, point, "NOT TESTED",
                                 "needs 10,000+ transactions; hard-killed in tests/test_snapshot.py instead"))
@@ -405,6 +480,13 @@ def targeted_one(run, profile, point, rng, rnd):
             with open(db, "r+b") as f:                     # F4: cut 1 byte off the end by hand
                 f.truncate(size - 1)
             c = serve(point)
+            c.wait_stderr("PAUSE " + point)
+            c.kill()
+        elif point.startswith("compact."):
+            prefill(n=12).kill()                           # 12 ACKed puts on 8 keys: garbage to remove
+            c = serve(point)
+            c.wait_stderr("READY")
+            c.send(b"w1-c%d compact\n" % rnd)             # no reply can come: serve stops at the pause
             c.wait_stderr("PAUSE " + point)
             c.kill()
         elif point == "close":

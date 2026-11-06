@@ -14,7 +14,9 @@ class Profile:
     """The shape of the workload for one mode."""
 
     def __init__(self, name, writers=3, keys_per_writer=16, p_put=0.5, p_del=0.2,
-                 batch_sizes=(2, 10), tail=(0, 40), p_big_value=0.0, delay_ms=(10, 400)):
+                 batch_sizes=(2, 10), tail=(0, 40), p_big_value=0.0, delay_ms=(10, 400),
+                 p_compact=0.0, prefill=0, max_bytes=0, allowed_errors=(), shared_keys=0,
+                 restart_kills=0, restart_ms=(0, 0)):
         self.name = name
         self.writers = writers
         self.keys_per_writer = keys_per_writer
@@ -24,6 +26,13 @@ class Profile:
         self.tail = tail
         self.p_big_value = p_big_value
         self.delay_ms = delay_ms
+        self.p_compact = p_compact          # share of requests that are "compact"
+        self.prefill = prefill              # keys written by writer 0 before the first kill
+        self.max_bytes = max_bytes          # size cap given at creation (disk-full)
+        self.allowed_errors = allowed_errors  # ERR reasons that are allowed (prefixes)
+        self.shared_keys = shared_keys      # overlap: all writers use these keys
+        self.restart_kills = restart_kills  # recovery-crash: extra kills of a restarted serve
+        self.restart_ms = restart_ms        # ...after this many ms from its start
 
 
 PROFILES = {
@@ -31,6 +40,11 @@ PROFILES = {
     "large-values": Profile("large-values", p_big_value=0.35, delay_ms=(20, 600)),
     "large-batches": Profile("large-batches", p_put=0.2, p_del=0.1, batch_sizes=(1000, 10_000),
                              keys_per_writer=64, delay_ms=(20, 800)),
+    "compaction": Profile("compaction", keys_per_writer=800, p_put=0.45, p_del=0.15, p_compact=0.12,
+                          batch_sizes=(10, 200), delay_ms=(50, 700)),
+    "recovery-crash": Profile("recovery-crash", prefill=100_000, restart_kills=3, restart_ms=(60, 220)),
+    "disk-full": Profile("disk-full", max_bytes=4 * 1024, tail=(0, 220), allowed_errors=("SizeCapReached",)),
+    "overlap": Profile("overlap", shared_keys=8, p_put=0.7, p_del=0.3),
 }
 
 
@@ -39,8 +53,15 @@ def key_of(wid, j):
 
 
 def writer_keys(profile):
-    return {w: [key_of(w, j) for j in range(profile.keys_per_writer)]
+    keys = {w: [key_of(w, j) for j in range(profile.keys_per_writer)]
             for w in range(1, profile.writers + 1)}
+    if profile.prefill:
+        keys[0] = [b"p%06d" % i for i in range(profile.prefill)]   # writer 0: the prefill
+    return keys
+
+
+def shared_key(j):
+    return b"s%d" % j
 
 
 def make_value(rng, profile, wid, seq, op, iteration):
@@ -57,6 +78,14 @@ def next_request(rng, profile, wid, seq, iteration):
     """(rid, request bytes, effects, summary) for writer wid's request number seq."""
     rid = b"w%d-%d" % (wid, seq)
     keys = profile.keys_per_writer
+    if profile.p_compact and rng.random() < profile.p_compact:
+        return rid, b"%s compact\n" % rid, [], "compact"
+    if profile.shared_keys:                                        # overlap: single ops on shared keys
+        k = shared_key(rng.randrange(profile.shared_keys))
+        if rng.random() < profile.p_put / (profile.p_put + profile.p_del):
+            v = make_value(rng, profile, wid, seq, 0, iteration)
+            return rid, b"%s put %s %s\n" % (rid, k, v), [("put", k, v)], "put {}".format(k.decode())
+        return rid, b"%s del %s\n" % (rid, k), [("del", k, None)], "del {}".format(k.decode())
     r = rng.random()
     if r < profile.p_put:
         k = key_of(wid, rng.randrange(keys))
