@@ -1,0 +1,20 @@
+# Proof (a): a fake engine that ACKs everything and stores nothing. The tester must FAIL.
+# Command: python3 torture.py --iterations 5 --seed 31337 --kvdb tester/fake_kvdb.py --failures-dir evidence/torture/planted/fake-serve
+# Captured 2026-11-06 16:15:01 IST
+
+torture: mode default seed 31337 iterations 5 writers 3 kvdb tester/fake_kvdb.py
+Traceback (most recent call last):
+  File "/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/torture.py", line 62, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/torture.py", line 58, in main
+    return modes.run_random(args)
+           ~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/tester/modes.py", line 258, in run_random
+    shutil.copyfile(db, after_kill)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/shutil.py", line 260, in copyfile
+    with open(src, 'rb') as fsrc:
+         ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/.torture-work/default-seed-31337/db.kv'
+exit=1

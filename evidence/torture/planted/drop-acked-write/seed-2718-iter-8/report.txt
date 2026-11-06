@@ -1,0 +1,5 @@
+seed 2718 iteration 8 mode default
+command: python3 torture.py --iterations 20 --seed 2718 --kvdb /Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/.torture-work/planted-drop-acked-write/kvdb.py --failures-dir /Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/evidence/torture/planted/drop-acked-write
+writer 3: the dump matches none of the 2 allowed state(s)
+  unanswered request: w3-929 (allowed: fully applied or fully absent)
+  key w3k15: expected <absent> but found w3.s908.o0.i7.777e6850c273b76291426c22449e4  (operation ids: w3-913, w3-929)

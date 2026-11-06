@@ -1,0 +1,450 @@
+ITERATION 1 kill_delay_ms 94.7
+SEND w1-1 batch of 4
+SEND w2-1 batch of 2
+SEND w3-1 del w3k10
+ACK w1-1
+SEND w1-2 put w1k5
+ACK w2-1
+SEND w2-2 put w2k3
+ACK w3-1
+SEND w3-2 put w3k6
+ACK w1-2
+SEND w1-3 put w1k3
+ACK w2-2
+SEND w2-3 batch of 8
+ACK w3-2
+SEND w3-3 put w3k2
+ACK w1-3
+SEND w1-4 del w1k1
+ACK w2-3
+SEND w2-4 del w2k10
+ACK w3-3
+SEND w3-4 batch of 5
+ACK w1-4
+SEND w1-5 put w1k5
+ACK w2-4
+SEND w2-5 put w2k1
+ACK w3-4
+SEND w3-5 put w3k4
+ACK w1-5
+SEND w1-6 batch of 4
+ACK w2-5
+SEND w2-6 batch of 5
+ACK w3-5
+SEND w3-6 del w3k7
+ACK w1-6
+SEND w1-7 del w1k3
+ACK w2-6
+SEND w2-7 put w2k15
+ACK w3-6
+SEND w3-7 put w3k5
+ACK w1-7
+SEND w1-8 put w1k4
+ACK w2-7
+SEND w2-8 del w2k15
+ACK w3-7
+SEND w3-8 put w3k6
+ACK w1-8
+SEND w1-9 batch of 2
+ACK w2-8
+SEND w2-9 put w2k13
+ACK w3-8
+SEND w3-9 put w3k5
+ACK w1-9
+SEND w1-10 put w1k7
+ACK w2-9
+SEND w2-10 put w2k7
+ACK w3-9
+SEND w3-10 put w3k2
+ACK w1-10
+SEND w1-11 put w1k13
+ACK w2-10
+SEND w2-11 batch of 6
+ACK w3-10
+SEND w3-11 put w3k7
+ACK w1-11
+SEND w1-12 put w1k1
+ACK w2-11
+SEND w2-12 batch of 6
+ACK w3-11
+SEND w3-12 put w3k7
+ACK w1-12
+SEND w1-13 put w1k7
+ACK w2-12
+SEND w2-13 put w2k13
+ACK w3-12
+SEND w3-13 put w3k5
+ACK w1-13
+SEND w1-14 del w1k9
+ACK w2-13
+SEND w2-14 put w2k14
+ACK w3-13
+SEND w3-14 del w3k11
+ACK w1-14
+SEND w1-15 put w1k13
+ACK w2-14
+SEND w2-15 put w2k4
+ACK w3-14
+SEND w3-15 put w3k2
+ACK w1-15
+SEND w1-16 batch of 5
+ACK w2-15
+SEND w2-16 put w2k11
+ACK w3-15
+SEND w3-16 put w3k14
+ACK w1-16
+SEND w1-17 put w1k10
+ACK w2-16
+SEND w2-17 put w2k10
+ACK w3-16
+SEND w3-17 put w3k8
+ACK w1-17
+SEND w1-18 del w1k13
+ACK w2-17
+SEND w2-18 batch of 2
+ACK w3-17
+SEND w3-18 put w3k6
+ACK w1-18
+SEND w1-19 put w1k5
+ACK w2-18
+SEND w2-19 del w2k7
+ACK w3-18
+SEND w3-19 put w3k5
+ACK w1-19
+SEND w1-20 batch of 2
+ACK w2-19
+SEND w2-20 put w2k8
+ACK w3-19
+SEND w3-20 del w3k12
+ACK w1-20
+SEND w1-21 put w1k7
+ACK w2-20
+SEND w2-21 batch of 10
+ACK w3-20
+SEND w3-21 batch of 6
+ACK w1-21
+SEND w1-22 del w1k7
+ACK w2-21
+SEND w2-22 put w2k15
+ACK w3-21
+SEND w3-22 put w3k0
+ACK w1-22
+SEND w1-23 batch of 9
+ACK w2-22
+SEND w2-23 del w2k4
+ACK w3-22
+SEND w3-23 put w3k0
+ACK w1-23
+SEND w1-24 put w1k2
+ACK w2-23
+SEND w2-24 put w2k5
+ACK w3-23
+SEND w3-24 put w3k2
+ACK w1-24
+SEND w1-25 del w1k9
+ACK w2-24
+SEND w2-25 batch of 3
+ACK w3-24
+SEND w3-25 batch of 10
+ACK w1-25
+SEND w1-26 del w1k12
+ACK w2-25
+SEND w2-26 put w2k11
+ACK w3-25
+SEND w3-26 batch of 3
+ACK w1-26
+SEND w1-27 put w1k0
+ACK w2-26
+SEND w2-27 put w2k2
+ACK w3-26
+SEND w3-27 del w3k6
+ACK w1-27
+SEND w1-28 batch of 9
+ACK w2-27
+SEND w2-28 put w2k12
+ACK w3-27
+SEND w3-28 batch of 3
+ACK w1-28
+SEND w1-29 put w1k3
+ACK w2-28
+SEND w2-29 batch of 3
+ACK w3-28
+SEND w3-29 del w3k12
+ACK w1-29
+SEND w1-30 put w1k5
+ACK w2-29
+SEND w2-30 put w2k9
+ACK w3-29
+SEND w3-30 put w3k4
+ACK w1-30
+SEND w1-31 put w1k12
+ACK w2-30
+SEND w2-31 put w2k0
+ACK w3-30
+SEND w3-31 put w3k6
+ACK w1-31
+SEND w1-32 del w1k15
+ACK w2-31
+SEND w2-32 batch of 10
+ACK w3-31
+SEND w3-32 put w3k2
+ACK w1-32
+SEND w1-33 del w1k6
+ACK w2-32
+SEND w2-33 put w2k13
+ACK w3-32
+SEND w3-33 put w3k11
+ACK w1-33
+SEND w1-34 put w1k4
+ACK w2-33
+SEND w2-34 batch of 2
+ACK w3-33
+SEND w3-34 batch of 8
+ACK w1-34
+SEND w1-35 del w1k15
+ACK w2-34
+SEND w2-35 del w2k8
+ACK w3-34
+SEND w3-35 batch of 5
+ACK w1-35
+SEND w1-36 put w1k5
+ACK w2-35
+SEND w2-36 batch of 7
+ACK w3-35
+SEND w3-36 del w3k2
+ACK w1-36
+SEND w1-37 put w1k4
+ACK w2-36
+SEND w2-37 del w2k15
+ACK w3-36
+SEND w3-37 del w3k7
+ACK w1-37
+SEND w1-38 del w1k10
+ACK w2-37
+SEND w2-38 del w2k10
+ACK w3-37
+SEND w3-38 put w3k5
+ACK w1-38
+SEND w1-39 batch of 7
+ACK w2-38
+SEND w2-39 put w2k11
+ACK w3-38
+SEND w3-39 put w3k13
+ACK w1-39
+SEND w1-40 batch of 2
+ACK w2-39
+SEND w2-40 put w2k4
+ACK w3-39
+SEND w3-40 put w3k12
+ACK w1-40
+SEND w1-41 put w1k2
+ACK w2-40
+SEND w2-41 put w2k14
+ACK w3-40
+SEND w3-41 del w3k11
+ACK w1-41
+SEND w1-42 put w1k4
+ACK w2-41
+SEND w2-42 batch of 5
+ACK w3-41
+SEND w3-42 put w3k11
+ACK w1-42
+SEND w1-43 put w1k14
+ACK w2-42
+SEND w2-43 put w2k9
+ACK w3-42
+SEND w3-43 put w3k5
+ACK w1-43
+SEND w1-44 put w1k13
+ACK w2-43
+SEND w2-44 put w2k14
+ACK w3-43
+SEND w3-44 batch of 9
+ACK w1-44
+SEND w1-45 put w1k13
+ACK w2-44
+SEND w2-45 put w2k10
+ACK w3-44
+SEND w3-45 put w3k3
+ACK w1-45
+SEND w1-46 del w1k6
+ACK w2-45
+SEND w2-46 batch of 9
+ACK w3-45
+SEND w3-46 del w3k13
+ACK w1-46
+SEND w1-47 batch of 2
+ACK w2-46
+SEND w2-47 del w2k11
+ACK w3-46
+SEND w3-47 del w3k0
+ACK w1-47
+SEND w1-48 del w1k7
+ACK w2-47
+SEND w2-48 put w2k7
+ACK w3-47
+SEND w3-48 put w3k7
+ACK w1-48
+SEND w1-49 del w1k9
+ACK w2-48
+SEND w2-49 put w2k4
+ACK w3-48
+SEND w3-49 batch of 6
+ACK w1-49
+SEND w1-50 put w1k8
+ACK w2-49
+SEND w2-50 put w2k1
+ACK w3-49
+SEND w3-50 put w3k13
+ACK w1-50
+SEND w1-51 batch of 4
+ACK w2-50
+SEND w2-51 put w2k4
+ACK w3-50
+SEND w3-51 put w3k11
+ACK w1-51
+SEND w1-52 batch of 2
+ACK w2-51
+SEND w2-52 put w2k6
+ACK w3-51
+SEND w3-52 put w3k3
+ACK w1-52
+SEND w1-53 batch of 5
+ACK w2-52
+SEND w2-53 batch of 5
+ACK w3-52
+SEND w3-53 del w3k6
+ACK w1-53
+SEND w1-54 put w1k8
+ACK w2-53
+SEND w2-54 put w2k3
+ACK w3-53
+SEND w3-54 del w3k2
+ACK w1-54
+SEND w1-55 put w1k6
+ACK w2-54
+SEND w2-55 del w2k2
+ACK w3-54
+SEND w3-55 batch of 5
+ACK w1-55
+SEND w1-56 batch of 3
+ACK w2-55
+SEND w2-56 put w2k11
+ACK w3-55
+SEND w3-56 put w3k7
+ACK w1-56
+SEND w1-57 del w1k10
+ACK w2-56
+SEND w2-57 del w2k6
+ACK w3-56
+SEND w3-57 put w3k8
+ACK w1-57
+SEND w1-58 put w1k15
+ACK w2-57
+SEND w2-58 put w2k6
+ACK w3-57
+SEND w3-58 batch of 10
+ACK w1-58
+SEND w1-59 batch of 9
+ACK w2-58
+SEND w2-59 del w2k5
+ACK w3-58
+SEND w3-59 batch of 3
+ACK w1-59
+SEND w1-60 put w1k15
+ACK w2-59
+SEND w2-60 batch of 7
+ACK w3-59
+SEND w3-60 put w3k2
+ACK w1-60
+SEND w1-61 put w1k8
+ACK w2-60
+SEND w2-61 batch of 5
+ACK w3-60
+SEND w3-61 put w3k7
+ACK w1-61
+SEND w1-62 batch of 10
+ACK w2-61
+SEND w2-62 batch of 7
+ACK w3-61
+SEND w3-62 put w3k13
+ACK w1-62
+SEND w1-63 put w1k11
+ACK w2-62
+SEND w2-63 batch of 7
+ACK w3-62
+SEND w3-63 batch of 6
+ACK w1-63
+SEND w1-64 del w1k15
+ACK w2-63
+SEND w2-64 put w2k5
+ACK w3-63
+SEND w3-64 put w3k5
+ACK w1-64
+SEND w1-65 put w1k15
+ACK w2-64
+SEND w2-65 batch of 2
+ACK w3-64
+SEND w3-65 batch of 7
+ACK w1-65
+SEND w1-66 put w1k11
+ACK w2-65
+SEND w2-66 put w2k15
+ACK w3-65
+SEND w3-66 del w3k7
+ACK w1-66
+SEND w1-67 put w1k11
+ACK w2-66
+SEND w2-67 put w2k5
+ACK w3-66
+SEND w3-67 del w3k6
+ACK w1-67
+SEND w1-68 del w1k3
+ACK w2-67
+SEND w2-68 put w2k4
+ACK w3-67
+SEND w3-68 put w3k5
+ACK w1-68
+SEND w1-69 put w1k13
+ACK w2-68
+SEND w2-69 del w2k0
+ACK w3-68
+SEND w3-69 put w3k4
+ACK w1-69
+SEND w1-70 put w1k5
+ACK w2-69
+SEND w2-70 batch of 5
+ACK w3-69
+SEND w3-70 put w3k5
+ACK w1-70
+SEND w1-71 put w1k6
+ACK w2-70
+SEND w2-71 put w2k14
+ACK w3-70
+SEND w3-71 put w3k4
+ACK w1-71
+SEND w1-72 del w1k5
+ACK w2-71
+SEND w2-72 batch of 8
+ACK w3-71
+SEND w3-72 del w3k12
+ACK w1-72
+SEND w1-73 batch of 10
+ACK w2-72
+SEND w2-73 batch of 2
+ACK w3-72
+SEND w3-73 del w3k2
+ACK w1-73
+SEND w1-74 put w1k7
+ACK w2-73
+SEND w2-74 put w2k15
+ACK w3-73
+SEND w3-74 put w3k5
+ACK w1-74
+SEND w1-75 put w1k6
+ACK w2-74
+SEND w2-75 del w2k1
+ACK w3-74
+SEND w3-75 del w3k2
+ACK w1-75
+SEND w1-76 del w1k11

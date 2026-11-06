@@ -1,0 +1,65 @@
+# Proof (b): three bugs planted in a COPY of the engine. The tester must FAIL each time and name the operation id.
+# Command: python3 tools/planted_bugs.py --seed 2718 --iterations 20
+# Captured 2026-11-06 16:18:59 IST
+
+==============================================================================
+PLANTED BUG drop-acked-write: the 5th transaction of every serve process returns success without writing anything
+command: python3 torture.py --iterations 20 --seed 2718 --kvdb .torture-work/planted-drop-acked-write/kvdb.py
+torture: mode default seed 2718 iterations 20 writers 3 kvdb .torture-work/planted-drop-acked-write/kvdb.py
+iter    1 seed 2718 kill_ms   94.7 in_flight 3 acks    210 keys   34 PASS (0.64 s)
+iter    2 seed 2718 kill_ms  139.5 in_flight 3 acks    516 keys   36 PASS (0.66 s)
+iter    3 seed 2718 kill_ms  120.3 in_flight 3 acks    779 keys   39 PASS (0.66 s)
+iter    4 seed 2718 kill_ms  368.1 in_flight 3 acks   1556 keys   30 PASS (0.98 s)
+iter    5 seed 2718 kill_ms  347.9 in_flight 3 acks   2252 keys   36 PASS (0.92 s)
+iter    6 seed 2718 kill_ms  103.5 in_flight 3 acks   2464 keys   38 PASS (0.67 s)
+iter    7 seed 2718 kill_ms  126.1 in_flight 3 acks   2717 keys   31 PASS (0.70 s)
+iter    8 seed 2718 kill_ms   24.9 in_flight 3 acks   2767 keys   42 FAIL (0.57 s)
+FAIL at iteration 8 (seed 2718, mode default):
+  writer 3: the dump matches none of the 2 allowed state(s)
+    unanswered request: w3-929 (allowed: fully applied or fully absent)
+    key w3k15: expected <absent> but found w3.s908.o0.i7.777e6850c273b76291426c22449e4  (operation ids: w3-913, w3-929)
+saved: evidence/torture/planted/drop-acked-write/seed-2718-iter-8
+exit code 1 -> CAUGHT
+==============================================================================
+PLANTED BUG half-batch: a batch is written with only its first half of operations
+command: python3 torture.py --iterations 20 --seed 2718 --kvdb .torture-work/planted-half-batch/kvdb.py
+torture: mode default seed 2718 iterations 20 writers 3 kvdb .torture-work/planted-half-batch/kvdb.py
+iter    1 seed 2718 kill_ms   94.7 in_flight 3 acks    223 keys   32 FAIL (0.62 s)
+FAIL at iteration 1 (seed 2718, mode default):
+  writer 1: the dump matches none of the 2 allowed state(s)
+    unanswered request: w1-76 (allowed: fully applied or fully absent)
+    key w1k1: expected w1.s73.o7.i1.d1181 but found w1.s52.o0.i1.609f6846281d712244166874c075  (operation ids: w1-73, w1-76)
+    key w1k10: expected w1.s59.o5.i1.5b74c0cadb7c90b14797a502e8d394 but found <absent>  (operation ids: w1-59, w1-76)
+    key w1k12: expected w1.s73.o9.i1.93d2d9c7bd6a825626c838da2da58d102a898d but found w1.s73.o2.i1.9f  (operation ids: w1-73, w1-76)
+    key w1k13: expected w1.s73.o6.i1.5dc747191c140292b1c8313035d4846 but found w1.s73.o4.i1.0130c43f59cb99f96940573a6b  (operation ids: w1-73, w1-76)
+    key w1k14: expected w1.s62.o7.i1.cd564b4a73834d068 but found w1.s59.o0.i1.8d0a6  (operation ids: w1-62, w1-76)
+    key w1k3: expected w1.s73.o5.i1.02b4d84f0995d3393a0a79a2fb but found <absent>  (operation ids: w1-73, w1-76)
+    key w1k4: expected <absent> but found w1.s42.o0.i1.0252a5a6e0ac041979414  (operation ids: w1-73, w1-76)
+  writer 2: the dump matches none of the 2 allowed state(s)
+    unanswered request: w2-75 (allowed: fully applied or fully absent)
+  ... (14 more lines)
+saved: evidence/torture/planted/half-batch/seed-2718-iter-1
+exit code 1 -> CAUGHT
+==============================================================================
+PLANTED BUG invent-key: every single put also writes a key nobody sent
+command: python3 torture.py --iterations 20 --seed 2718 --kvdb .torture-work/planted-invent-key/kvdb.py
+torture: mode default seed 2718 iterations 20 writers 3 kvdb .torture-work/planted-invent-key/kvdb.py
+iter    1 seed 2718 kill_ms   94.7 in_flight 3 acks    208 keys   77 FAIL (0.69 s)
+FAIL at iteration 1 (seed 2718, mode default):
+  key invented-w1k0 = never-sent was never written by any writer
+  key invented-w1k1 = never-sent was never written by any writer
+  key invented-w1k10 = never-sent was never written by any writer
+  key invented-w1k11 = never-sent was never written by any writer
+  key invented-w1k12 = never-sent was never written by any writer
+  key invented-w1k13 = never-sent was never written by any writer
+  key invented-w1k14 = never-sent was never written by any writer
+  key invented-w1k15 = never-sent was never written by any writer
+  key invented-w1k2 = never-sent was never written by any writer
+  key invented-w1k3 = never-sent was never written by any writer
+  key invented-w1k4 = never-sent was never written by any writer
+  ... (32 more lines)
+saved: evidence/torture/planted/invent-key/seed-2718-iter-1
+exit code 1 -> CAUGHT
+==============================================================================
+3 of 3 planted bugs caught
+exit=0

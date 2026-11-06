@@ -1,0 +1,21 @@
+# Proof (a), run 2 (after fixing the tester crash of run 1): a fake engine that ACKs everything and stores nothing. The tester must FAIL.
+# Command: python3 torture.py --iterations 5 --seed 31337 --kvdb tester/fake_kvdb.py --failures-dir evidence/torture/planted/fake-serve
+# Captured 2026-11-06 16:15:18 IST
+
+torture: mode default seed 31337 iterations 5 writers 3 kvdb tester/fake_kvdb.py
+iter    1 seed 31337 kill_ms  275.2 in_flight 3 acks   2225 keys    0 FAIL (0.48 s)
+FAIL at iteration 1 (seed 31337, mode default):
+  writer 1: the dump matches none of the 2 allowed state(s)
+    unanswered request: w1-742 (allowed: fully applied or fully absent)
+    key w1k0: expected w1.s734.o0.i1.90db39ef28e3bb0a29fa13338e4c93c19 but found <absent>  (operation ids: w1-734, w1-742)
+    key w1k1: expected w1.s738.o0.i1.72bbf8edd28771b0fa1b4fe5783793631 but found <absent>  (operation ids: w1-738, w1-742)
+    key w1k10: expected w1.s739.o3.i1.9236cc7c6a711ce15a50418f95290fd3 but found <absent>  (operation ids: w1-739, w1-742)
+    key w1k11: expected w1.s740.o0.i1. but found <absent>  (operation ids: w1-740, w1-742)
+    key w1k12: expected w1.s739.o5.i1.c73b69e92 but found <absent>  (operation ids: w1-739, w1-742)
+    key w1k13: expected w1.s741.o0.i1.314cf1c3594a4d7e0b3614acd but found <absent>  (operation ids: w1-741, w1-742)
+    key w1k15: expected w1.s739.o4.i1.fe6211a408bbbe104b80a9a but found <absent>  (operation ids: w1-739, w1-742)
+    key w1k2: expected w1.s738.o5.i1.b00bd6194e36066569b2b813d40af006e07d but found <absent>  (operation ids: w1-738, w1-742)
+    key w1k3: expected w1.s732.o5.i1.6852aea0f881f5543 or w1.s742.o0.i1. but found <absent>  (operation ids: w1-732, w1-742)
+... (      48 lines in total)
+saved: evidence/torture/planted/fake-serve/seed-31337-iter-1
+exit=1
