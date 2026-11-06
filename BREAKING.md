@@ -31,6 +31,8 @@ To be written from evidence.
 2. **Recovery is too slow for a million keys — measured, not met yet.** Rough estimate on our laptop (i5-8259U, 8 GB, Python 3.13.9, warm cache): opening 1,000,000 single-put transactions takes **4.5 s**, and 1,000,000 keys in 100 batches take **1.6 s**. The brief's limit is 2 s (F3, B6). Cause not yet profiled; the scan in `src/kv/recovery.py` `scan` makes one Python call to `layout.decode_txn` per transaction. Fix planned for Phase 6. Evidence: `evidence/recovery-early-estimate.md`.
 3. **Our crash tests cannot see a missing fsync.** A process kill leaves the OS page cache intact, so deleting the commit fsync (step 6) makes no test fail (`evidence/engine-mutation-check.txt`, the one expected survivor). The fsyncs only matter for power loss or an OS crash, which we do not claim.
 
+4. **Nothing stops two processes from opening the same file.** If `kvdb.py open` (or `get`, `dump` …) runs while `serve` is in the middle of a write, the second process sees a body without a marker, treats it as a torn tail and `os.ftruncate`s it. `serve` then writes its marker at its own position, past the new end; the gap is filled with zero bytes, and the next open finds `0x00` where a transaction type should be: CORRUPT, open refuses (invariant rule 5). *Reasoned from `src/kv/db.py` `DB._commit` and `src/kv/recovery.py` `recover`; not yet reproduced by a test.* A fix would be an exclusive `fcntl.flock` taken in `open_db` (macOS and Linux); not decided by the team yet. Until then: never run another `kvdb.py` command on a file while `serve` has it open.
+
 Further weaknesses: to be written from evidence.
 
 ## 4. What we tried that failed

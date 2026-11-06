@@ -2,21 +2,113 @@
 
 ## Build
 
-To be written from evidence.
+From the repository root, with only Python 3.10 or newer installed (we use `python3`, version 3.13.9, on macOS 15.8.1):
+
+```
+python3 -m compileall -q .           # the build: checks every file for syntax errors
+python3 tools/check_imports.py       # prints OK: every import is standard library or ours
+python3 -m unittest discover -s tests -v
+```
+
+Nothing is installed; there is no `requirements.txt`. The launchers `./kvdb` and `./torture` (macOS and Linux) run `kvdb.py` and `torture.py` with `python3`. On Windows run `py kvdb.py ...` and `py torture.py ...` instead (not tested on Windows).
 
 Note: the torture tool lives in `tester/` and `torture.py`, not in a `torture/` folder, so no folder clashes with a `./torture` launcher in the repository root.
 
 ## Requirements
 
-To be written from evidence.
+Python 3.10 or newer (the import checker uses `sys.stdlib_module_names`). Standard library only — `tools/check_imports.py` proves it and refuses `sqlite3`, `dbm` and `shelve`.
 
 ## Commands
 
-To be written from evidence.
+> Status: implemented in `kvdb.py` (Phase 4). Every example below is a **real run on our laptop**: `python3 tools/readme_commands.py --write` ran each `$` line in a fresh folder and pasted its output; `tests/test_cli.py` runs them again and fails if the output differs (only `recovery_ms` values are not compared).
+
+| Command | Prints | Exit code |
+|---|---|---|
+| `./kvdb open <path> [--max-bytes N]` | `keys=<n> recovery_ms=<n> bytes_cut=<n> trailer_restored=<yes\|no>` | 0 |
+| `./kvdb put <path> <key> <value>` | `OK` | 0 |
+| `./kvdb get <path> <key>` | the value, or `NOTFOUND` | 0 |
+| `./kvdb del <path> <key>` | `OK` (also for a missing key) | 0 |
+| `./kvdb batch <path> <file>` | `OK` — the file has one `put <k> <v>` or `del <k>` per line; blank lines are skipped | 0 |
+| `./kvdb dump <path> [--hex]` | one `<key> <value>` per line, sorted by raw key bytes; `--hex` prints both as `hex:` | 0 |
+| `./kvdb check <path>` | `OK`, or one reason (see "Recovery algorithm"); **never changes the file** | 0 if `OK`, 1 otherwise |
+| `./kvdb serve <path>` | see "serve protocol" | 0 when stdin closes |
+| any command that the engine refuses, or a file that is not ours / corrupt | `ERR <ErrorClass>: <reason>` on stdout | 3 |
+| wrong arguments | usage on stderr | 2 |
+
+- **Keys and values:** plain text (no spaces, not starting with `hex:` or `file:`), `hex:<digits>` for any bytes (the empty value is `hex:`), or `file:<path>` (needed for a 1 MB value: it cannot fit on a command line). A value that starts with `-` must come after `--`, e.g. `./kvdb put db.kv -- k -5`, or be written as `hex:`.
+- **Printed values** use plain text only when it is unambiguous: visible ASCII, no space, not starting with `hex:`/`file:`, and not the word `NOTFOUND`. Anything else is printed as `hex:`.
+- Every command except `check` runs recovery first, so `get`, `dump` and the others may repair a torn tail, exactly like `open`.
+
+<!-- commands:begin -->
+```console
+$ ./kvdb open demo.kv
+keys=0 recovery_ms=1 bytes_cut=0 trailer_restored=no
+$ ./kvdb put demo.kv hasib 20
+OK
+$ ./kvdb get demo.kv hasib
+20
+$ ./kvdb get demo.kv nobody
+NOTFOUND
+$ ./kvdb put demo.kv empty hex:
+OK
+$ ./kvdb get demo.kv empty
+hex:
+$ ./kvdb put demo.kv tricky NOTFOUND
+OK
+$ ./kvdb get demo.kv tricky
+hex:4e4f54464f554e44
+$ printf 'put ali 30\nput x 1\ndel x\n' > ops.txt
+$ ./kvdb batch demo.kv ops.txt
+OK
+$ ./kvdb get demo.kv x
+NOTFOUND
+$ ./kvdb del demo.kv hasib
+OK
+$ ./kvdb dump demo.kv
+ali 30
+empty hex:
+tricky hex:4e4f54464f554e44
+$ ./kvdb dump demo.kv --hex
+hex:616c69 hex:3330
+hex:656d707479 hex:
+hex:747269636b79 hex:4e4f54464f554e44
+$ ./kvdb check demo.kv
+OK
+$ ./kvdb put demo.kv "a b" 1; echo "exit=$?"
+ERR BadToken: key b'a b' contains a space: use hex:
+exit=3
+$ printf '1 put hasib 21\n2 batch 2\nput a 1\nput b 2\n' | ./kvdb serve demo.kv 2>/dev/null | sort
+ACK 1
+ACK 2
+$ printf 'g1 get hasib\n' | ./kvdb serve demo.kv 2>/dev/null
+VAL g1 21
+$ python3 -c "import os; os.truncate('demo.kv', os.path.getsize('demo.kv') - 1)"
+$ ./kvdb check demo.kv; echo "exit=$?"
+MISSING_TRAILER at 275
+exit=1
+$ ./kvdb open demo.kv
+keys=6 recovery_ms=22 bytes_cut=0 trailer_restored=yes
+$ ./kvdb check demo.kv
+OK
+$ ./kvdb open small.kv --max-bytes 100
+keys=0 recovery_ms=1 bytes_cut=0 trailer_restored=no
+$ ./kvdb put small.kv k1 0123456789
+OK
+$ ./kvdb put small.kv k2 0123456789
+OK
+$ ./kvdb put small.kv k3 0123456789; echo "exit=$?"
+ERR SizeCapReached: transaction needs 39 bytes; file is 94 of max_bytes 100
+exit=3
+$ printf 'not a database' > foreign.kv
+$ ./kvdb get foreign.kv k; echo "exit=$?"
+ERR NotOurFile: file has 14 bytes and is not the start of a KVDB header
+exit=3
+```
+<!-- commands:end -->
 
 ## serve protocol
 
-> Status: design, frozen in Phase 1. **Not implemented yet** (Phase 4).
+> Status: implemented in `kvdb.py` `Server` and `cmd_serve` (Phase 4); tested in `tests/test_cli.py` `ServeTest`, including ACK → `kill -9 <PID>` → reopen.
 
 `kvdb serve <path>` reads one request per line from stdin (binary) and writes one line per result to stdout.
 
@@ -42,6 +134,11 @@ ERR <id> <reason>     nothing was changed
 - `<id>` is any token without spaces, unique per request. The torture tool uses `w<writer>-<sequence>`.
 - stderr carries `PID <n>` at start, `PAUSE <name>` at pause points, and diagnostics, always flushed.
 - One thread reads complete requests. A thread pool with at least two workers calls the engine. Every stdout line is written under a lock and flushed at once.
+- stderr: `PID <n>` first (before recovery), then `READY keys=<n> recovery_ms=<n> bytes_cut=<n> trailer_restored=<yes|no>` once recovery has finished and requests are accepted.
+- **Requests in flight run concurrently** (4 worker threads). Two requests sent without waiting can finish in either order, and their replies can come back in either order. A client that needs A before B must wait for A's ACK before sending B.
+- A batch is read completely (its header line plus n lines) before anything is decided. If any of its lines is malformed, the whole batch gets `ERR` and nothing is written. If the count itself is not a number from 1 to 10,000, the request gets `ERR` and the following lines are read as requests of their own.
+- When stdin closes, serve finishes the requests it has, closes the database and exits with code 0.
+- `ERR` means the engine raised and the transaction was rolled back, so it is absent. One rare exception: if the second fsync fails **and** the rollback then fails too, the reply is `ERR … DatabaseFailed` and the transaction may still be present after a reopen — allowed by invariant rule 2, because success was never returned.
 
 ## On-disk format
 

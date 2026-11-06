@@ -294,6 +294,7 @@ ERR <id> <reason>     nothing was changed
 
 - stderr carries `PID <n>` at start, `PAUSE <name>` at pause points, and diagnostics — always flushed.
 - `<id>` is any token without spaces, unique per request. The tester uses `w<writer>-<sequence>`.
+- Added in Phase 4 (both owners: read README "serve protocol" and "Commands"): stderr also carries `READY keys=<n> recovery_ms=<n> bytes_cut=<n> trailer_restored=<yes|no>` once recovery is done. Requests in flight run concurrently, so replies can come back in any order. `dump --hex` prints `hex:<key> hex:<value>` per line. Exit codes: 0 success (also NOTFOUND and check OK), 1 check found a problem, 2 usage error, 3 `ERR`.
 - One thread reads complete requests. A `concurrent.futures.ThreadPoolExecutor` with at least two workers calls the engine concurrently. Writes to stdout happen under a lock and are **flushed after every line** — when stdout is a pipe, Python otherwise holds the ACKs back and the tester never sees them.
 
 ## 15. Python traps — check every change against this list
