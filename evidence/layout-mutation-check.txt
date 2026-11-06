@@ -1,0 +1,19 @@
+# Evidence: can the layout tests fail? Planted bugs in an in-memory copy of src/kv/layout.py.
+# Captured 2026-11-06 15:17:58 IST, macOS 15.8.1, python3 3.13.9.
+
+## Run 1 (ad-hoc script, 3 mutants, BEFORE the test fix) — real output, last line verbatim:
+mutant 3 trust val_len without checking bytes left: 0 failing -> []
+(mutants 1 and 2 were caught: 13 and 80 failing sub-tests.)
+Finding: the cut tests checked only the status. With val_len trusted, decode still returned
+INCOMPLETE (the marker check caught it) but reported an offset PAST the end of the input.
+Fix: tests/test_layout.py now also asserts offset <= cut for every INCOMPLETE result.
+
+## Run 2 — command: python3 tools/mutation_check_layout.py
+CAUGHT   skip the crc32 check: 13 failing (sub)tests in test_flip_any_body_byte, test_flip_each_checksum_byte
+CAUGHT   return ops when the marker is cut: 80 failing (sub)tests in test_every_cut
+CAUGHT   trust val_len without checking the bytes left: 135 failing (sub)tests in test_every_cut, test_every_cut_of_a_large_value
+CAUGHT   accept a missing trailer anywhere as OK: 5 failing (sub)tests in test_every_cut
+CAUGHT   skip the key length limit: 1 failing (sub)tests in test_bad_header_fields
+CAUGHT   skip the op_count limit in validation: 2 failing (sub)tests in test_op_count_too_many, test_op_count_zero
+6 of 6 mutants caught
+exit=0

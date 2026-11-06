@@ -19,7 +19,9 @@ Further weaknesses: to be written from evidence.
 
 ## 4. What we tried that failed
 
-To be written from evidence.
+1. **Phase 2 — the cut tests could not see a "trust the length" bug.** *Symptom:* we planted a bug in an in-memory copy of `src/kv/layout.py` `decode_txn` so it no longer checked `val_len` against the bytes left. No test failed. Decode still returned INCOMPLETE, because the next check (the marker) caught it, but it reported an offset **past the end of the input**. *Found by:* mutation check, `evidence/layout-mutation-check.txt` run 1. *Fix:* `tests/test_layout.py` `CutTest` now also asserts that an INCOMPLETE offset never points past the input; `tools/mutation_check_layout.py` now catches all 6 planted bugs (run 2).
+
+More entries: to be written from evidence.
 
 ## 5. If we had 24 more hours
 

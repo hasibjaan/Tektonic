@@ -1,0 +1,76 @@
+# Annotated hex dump of the on-disk format (CLAUDE.md section 8)
+# Produced by: python3 tools/hexdump_format.py --write
+# Bytes from src/kv/layout.py (encode_header, encode_txn); labels from README field widths.
+# No database file is involved yet (Phase 2 has no file access): these are the exact bytes
+# a new file would hold after the operation.
+
+## 1. new file, then put hasib 20
+  offset  size  bytes (hex)                                       field
+  -- file header (16) --
+   0-3       4  4B 56 44 42                                       magic  = b'KVDB'
+   4-5       2  01 00                                             version u16  = 1
+   6-7       2  00 00                                             flags u16  = 0
+   8-15      8  00 00 00 00 00 00 00 00                           max_bytes u64  = 0 (no cap)
+  -- transaction 1 (starts at 16) --
+     16      1  A1                                                type u8  = 0xA1
+  17-18      2  01 00                                             op_count u16  = 1
+     19      1  01                                                op 1 u8  = put
+  20-21      2  05 00                                             key_len u16  = 5
+  22-25      4  02 00 00 00                                       val_len u32  = 2
+  26-30      5  68 61 73 69 62                                    key  = b'hasib'
+  31-32      2  32 30                                             value  = b'20'
+  -- commit marker (16), body = offsets 16-32 = 17 bytes --
+  33-36      4  43 4D 49 54                                       marker magic  = b'CMIT'
+  37-44      8  11 00 00 00 00 00 00 00                           body_len u64  = 17
+  45-48      4  A1 3E 15 AF                                       crc32 u32  = 0xAF153EA1
+     49      1  EE                                                trailer  = 0xEE
+  check: body_len 17 real 17; crc32 of body recomputed = 0xAF153EA1 -> MATCH
+  total: 50 bytes
+  layout.decode_txn(data, 16) -> status ok, ends at 50
+
+## 2. new file, then one batch: put hasib 20, put ali 30
+  offset  size  bytes (hex)                                       field
+  -- file header (16) --
+   0-3       4  4B 56 44 42                                       magic  = b'KVDB'
+   4-5       2  01 00                                             version u16  = 1
+   6-7       2  00 00                                             flags u16  = 0
+   8-15      8  00 00 00 00 00 00 00 00                           max_bytes u64  = 0 (no cap)
+  -- transaction 1 (starts at 16) --
+     16      1  A1                                                type u8  = 0xA1
+  17-18      2  02 00                                             op_count u16  = 2
+     19      1  01                                                op 1 u8  = put
+  20-21      2  05 00                                             key_len u16  = 5
+  22-25      4  02 00 00 00                                       val_len u32  = 2
+  26-30      5  68 61 73 69 62                                    key  = b'hasib'
+  31-32      2  32 30                                             value  = b'20'
+     33      1  01                                                op 2 u8  = put
+  34-35      2  03 00                                             key_len u16  = 3
+  36-39      4  02 00 00 00                                       val_len u32  = 2
+  40-42      3  61 6C 69                                          key  = b'ali'
+  43-44      2  33 30                                             value  = b'30'
+  -- commit marker (16), body = offsets 16-44 = 29 bytes --
+  45-48      4  43 4D 49 54                                       marker magic  = b'CMIT'
+  49-56      8  1D 00 00 00 00 00 00 00                           body_len u64  = 29
+  57-60      4  29 EF 79 76                                       crc32 u32  = 0x7679EF29
+     61      1  EE                                                trailer  = 0xEE
+  check: body_len 29 real 29; crc32 of body recomputed = 0x7679EF29 -> MATCH
+  total: 62 bytes
+  layout.decode_txn(data, 16) -> status ok, ends at 62
+
+## 3. Byte-for-byte comparison with README.md 'Worked example' (example 1)
+  README says the file is 50 bytes; real file is 50 bytes -> MATCH
+   0-15 README 4B 56 44 42 01 00 00 00 00 00 00 00 00 00 00 00  real 4B 56 44 42 01 00 00 00 00 00 00 00 00 00 00 00  MATCH
+  16-16 README A1                                               real A1                                               MATCH
+  17-18 README 01 00                                            real 01 00                                            MATCH
+  19-19 README 01                                               real 01                                               MATCH
+  20-21 README 05 00                                            real 05 00                                            MATCH
+  22-25 README 02 00 00 00                                      real 02 00 00 00                                      MATCH
+  26-30 README 68 61 73 69 62                                   real 68 61 73 69 62                                   MATCH
+  31-32 README 32 30                                            real 32 30                                            MATCH
+  33-36 README 43 4D 49 54                                      real 43 4D 49 54                                      MATCH
+  37-44 README 11 00 00 00 00 00 00 00                          real 11 00 00 00 00 00 00 00                          MATCH
+  45-48 README A1 3E 15 AF                                      real A1 3E 15 AF                                      MATCH
+  49-49 README EE                                               real EE                                               MATCH
+  README says the batch hasib=20, ali=30 costs 46 bytes; real transaction is 46 bytes -> MATCH
+
+RESULT: all fields match README

@@ -45,7 +45,7 @@ ERR <id> <reason>     nothing was changed
 
 ## On-disk format
 
-> Status: design, frozen in Phase 1 (CLAUDE.md section 8). **Not implemented yet** — Phase 2 checks it against a real hex dump.
+> Status: frozen in Phase 1 (CLAUDE.md section 8). Encoding and decoding are implemented in `src/kv/layout.py` (Phase 2), tested by `tests/test_layout.py`, and checked byte for byte against this section by `tools/hexdump_format.py` (`evidence/hexdump-format.txt`). **Reading and writing a real file is not implemented yet** (Phase 3).
 
 All integers are **unsigned and little-endian**. A file is a 16-byte header followed by transactions back to back. Every put, delete and batch is exactly one transaction.
 
@@ -98,11 +98,11 @@ one transaction:
 |---|---|---|---|---|
 | 0 | 4 | bytes | magic | `43 4D 49 54` = `CMIT` |
 | 4 | 8 | u64 | body_len | bytes in the body = transaction header + all operations |
-| 12 | 4 | u32 | crc32 | `zlib.crc32` of the body (not of the marker or trailer) |
+| 12 | 4 | u32 | crc32 | `zlib.crc32` of the body (not of the marker or trailer). This is the standard CRC-32 used by zip and PNG (polynomial 0x04C11DB7 reflected, init and final XOR 0xFFFFFFFF); check value: CRC of `123456789` = `0xCBF43926` (verified with `zlib.crc32` on our laptop) |
 
 **Sizes:** put = 27 + key + value bytes. Delete = 27 + key. Batch of n operations = 20 + 7n + Σkey + Σvalue. An empty database file is 16 bytes.
 
-**Worked example (design):** a new file, then `put hasib 20`. The file is 50 bytes:
+**Worked example (design):** a new file, then `put hasib 20`. The file is 50 bytes. Every byte below was checked in Phase 2 against the bytes `src/kv/layout.py` produces — see `evidence/hexdump-format.txt` (`python3 tools/hexdump_format.py`):
 
 | File offset | Bytes | Meaning |
 |---|---|---|
@@ -116,7 +116,7 @@ one transaction:
 | 31–32 | `32 30` | `20` |
 | 33–36 | `43 4D 49 54` | `CMIT` |
 | 37–44 | `11 00 00 00 00 00 00 00` | body_len = 17 (offsets 16–32) |
-| 45–48 | crc32 | `zlib.crc32` of bytes 16–32 — the real value goes in `evidence/hexdump-format.txt` in Phase 2 |
+| 45–48 | `A1 3E 15 AF` | crc32 = 0xAF153EA1, of bytes 16–32 |
 | 49 | `EE` | trailer |
 
 **Batch ordering (B5):** operations apply in list order and the last operation on a key wins. `put x 1` then `del x` in one batch leaves `x` absent, before and after a crash.
