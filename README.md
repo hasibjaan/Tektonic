@@ -45,7 +45,7 @@ ERR <id> <reason>     nothing was changed
 
 ## On-disk format
 
-> Status: frozen in Phase 1 (CLAUDE.md section 8). Encoding and decoding are implemented in `src/kv/layout.py` (Phase 2), tested by `tests/test_layout.py`, and checked byte for byte against this section by `tools/hexdump_format.py` (`evidence/hexdump-format.txt`). **Reading and writing a real file is not implemented yet** (Phase 3).
+> Status: frozen in Phase 1 (CLAUDE.md section 8). Encoding and decoding are implemented in `src/kv/layout.py` (Phase 2), tested by `tests/test_layout.py`, and checked byte for byte against this section by `tools/hexdump_format.py` (`evidence/hexdump-format.txt`). Reading and writing real files is implemented in `src/kv/db.py` and `src/kv/recovery.py` (Phase 3).
 
 All integers are **unsigned and little-endian**. A file is a 16-byte header followed by transactions back to back. Every put, delete and batch is exactly one transaction.
 
@@ -125,7 +125,7 @@ one transaction:
 
 ## Recovery algorithm
 
-> Status: design, frozen in Phase 1 (CLAUDE.md section 10). **Not implemented yet.**
+> Status: frozen in Phase 1 (CLAUDE.md section 10), implemented in `src/kv/recovery.py` `recover`, `scan` and `check` (Phase 3). Tested by `tests/test_db.py` (cuts at every byte, corrupt and foreign files) and by targeted hard kills in `tests/test_crash.py`. **Recovery time for 1,000,000 keys is over the 2-second limit** — see Measured results.
 
 A kill only ever cuts the end of the file — it never writes wrong bytes. So open sorts every problem into one of two kinds. **Torn:** the file ends before a field is complete, so it cut off the tail. **Corrupt:** any other bad byte — something a kill cannot cause.
 
@@ -142,7 +142,7 @@ A kill only ever cuts the end of the file — it never writes wrong bytes. So op
 
 ## Limits
 
-> Status: design, frozen in Phase 1. **Not implemented or tested yet.**
+> Status: frozen in Phase 1. Key, value and batch limits are enforced by `src/kv/layout.py` `validate_ops` (tested in `tests/test_layout.py`); the size cap by `src/kv/db.py` `DB._commit` (tested in `tests/test_db.py` `CapTest`, no crash). 1,000,000 keys open correctly but too slowly (Measured results).
 
 | Item | Limit |
 |---|---|
@@ -155,7 +155,7 @@ A kill only ever cuts the end of the file — it never writes wrong bytes. So op
 
 ## Errors
 
-> Status: design, frozen in Phase 1. Class names are planned, **not implemented yet**.
+> Status: implemented in `src/kv/errors.py` (Phase 3); all classes derive from `KVError`.
 
 | Error | Raised when | File changed? |
 |---|---|---|
@@ -163,7 +163,8 @@ A kill only ever cuts the end of the file — it never writes wrong bytes. So op
 | `SizeCapReached` | the whole transaction would push the file past `max_bytes` | no |
 | `NotOurFile` | wrong magic, version or flags, or a short file that is not the start of our header | no |
 | `CorruptFile` | a bad byte that a kill cannot produce (section "Recovery algorithm", step 7) | no |
-| `DatabaseFailed` | a write failed **and** the rollback truncate or its fsync also failed; every later write is refused until reopen | may end in a torn tail (never a complete marker for the failed write — see below), which the next open cuts |
+| `OSError` (from the OS) | a write or fsync failed and the rollback succeeded: the file is back at the end offset E | no |
+| `DatabaseFailed` | a write failed **and** the rollback truncate or its fsync also failed; every later write is refused until reopen. Also raised for any operation on a closed database | may end in a torn tail (never a complete marker for the failed write — see below), which the next open cuts |
 
 Why a failed write can never leave a complete marker that recovery would trust: the marker is written only after the body's fsync succeeded (CLAUDE.md section 9, steps 4–5). If the failure was in the marker write itself, the marker is incomplete and the tail is torn. If only the second fsync failed, the marker may be complete; then the rollback truncate removes it, and if that truncate also fails, the database is marked failed and the transaction **may survive** a later reopen even though the caller got an error. That is allowed by rule 2 of the invariant (an operation that did not return success may be fully present).
 
@@ -173,4 +174,12 @@ To be written from evidence.
 
 ## Measured results
 
-To be written from evidence.
+**Recovery time — ROUGH ESTIMATE from Phase 3, not the final benchmark** (`evidence/recovery-early-estimate.md`, `python3 tools/recovery_timing.py`). Intel i5-8259U, 8 GB RAM, macOS 15.8.1, Python 3.13.9, internal SSD (APFS), warm cache, files built directly with `src/kv/layout.py`. 1,000,000 distinct keys of 10 bytes, values of 10 bytes. Time of the full `open_db` call, slowest of 3 runs:
+
+| Dataset | File size (bytes) | Slowest open |
+|---|---|---|
+| 100 batches of 10,000 puts | 27,002,016 | 1.622 s |
+| 1,000,000 single-put transactions | 47,000,016 | 4.527 s |
+| the same + half of a 10,000-op batch (B6) | 47,130,026 | 4.635 s |
+
+**The 2-second limit (F3, B6) is NOT met yet.** Phase 6 profiles and fixes it.
