@@ -180,6 +180,31 @@ def _scan_fd(fd, size, index, on_first=None, start=layout.HEADER_SIZE):
         mm.close()
 
 
+COMPACT_TMP_SUFFIX = ".compact.tmp"
+
+
+def _remove_quietly(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
+def read_index(path):
+    """Read-only full scan of a whole file, no snapshot (used to validate a
+    compacted file). Returns (scan, index, size); scan.kind is CLEAN for a good file."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        size = os.fstat(fd).st_size
+        header = layout.decode_header(_read_all(fd, 0, min(size, layout.HEADER_SIZE)))
+        if header.status != layout.OK:
+            return Scan(CORRUPT, 0, "header: " + header.reason, 0), None, size
+        index = {}
+        return _scan_fd(fd, size, index), index, size
+    finally:
+        os.close(fd)
+
+
 # ---- open-time recovery (steps 1-8) ------------------------------------------
 
 def _create(path, max_bytes):
@@ -237,6 +262,7 @@ def recover(path, max_bytes=0):
                 header.max_bytes))
 
         snapshot.remove_leftover(path)                                     # a killed snapshot write
+        _remove_quietly(path + COMPACT_TMP_SUFFIX)                         # a killed compaction: never trusted
         loaded = snapshot.load(path, size, lambda offset, n: _read_all(fd, offset, n))
         if loaded.index is not None:                                       # step 4a: start from the snapshot
             index, start = loaded.index, loaded.covered_end

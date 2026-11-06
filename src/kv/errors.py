@@ -27,6 +27,17 @@ class CorruptFile(KVError):
         self.reason = reason
 
 
+class DatabaseBusy(KVError):
+    """Another open of this database (another process, or another open in this
+    process) holds its lock <path>.lock. Nothing was read or changed."""
+
+
+class CompactionFailed(KVError):
+    """Compaction stopped before its swap (disk full, a failed check of the new
+    file, or the result would not fit max_bytes). The temporary file was
+    deleted; the database is unchanged and still usable."""
+
+
 class DatabaseFailed(KVError):
     """A write failed AND its rollback failed, or the database is closed.
     Every later write is refused until the file is reopened."""

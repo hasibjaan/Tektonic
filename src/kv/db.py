@@ -7,16 +7,24 @@ the frozen write order in CLAUDE.md section 9 step by step. One global lock
 import os
 import threading
 
+try:
+    import fcntl                      # macOS and Linux
+except ImportError:                   # Windows: no fcntl, so no lock (a platform limit, NOT TESTED)
+    fcntl = None
+
 from . import layout
 from . import recovery
 from . import snapshot
-from .errors import DatabaseFailed, InvalidInput, SizeCapReached
+from .errors import CompactionFailed, DatabaseBusy, DatabaseFailed, InvalidInput, SizeCapReached
 from .pause import pause
 
 PUT = layout.OP_PUT
 DELETE = layout.OP_DELETE
 _OP_NAMES = {PUT: PUT, DELETE: DELETE, "put": PUT, "del": DELETE, "delete": DELETE}
-SNAPSHOT_MIN = 10_000      # take an index snapshot after max(SNAPSHOT_MIN, keys // 4) transactions
+SNAPSHOT_MIN = 10_000      # take an index snapshot after max(SNAPSHOT_MIN, keys // SNAPSHOT_DIVISOR) transactions
+SNAPSHOT_DIVISOR = 8       # Phase 6 re-measure: was 4
+COMPACT_BATCH_OPS = 10_000             # compaction writes live keys as batches of at most
+COMPACT_BATCH_BYTES = 64 * 1024 * 1024  # this many ops and this many value bytes
 
 
 def open_db(path, max_bytes=0, snapshot_every=SNAPSHOT_MIN):
@@ -26,16 +34,45 @@ def open_db(path, max_bytes=0, snapshot_every=SNAPSHOT_MIN):
     snapshot_every: the minimum number of transactions between index snapshots
     (tests use a small number; 0 turns snapshots off).
     """
-    rec = recovery.recover(path, max_bytes)
-    return DB(path, rec, snapshot_every), rec.report
+    lock_fd = _take_lock(path)                   # BEFORE recovery: no other open can cut our writes
+    try:
+        rec = recovery.recover(path, max_bytes)
+        return DB(path, rec, snapshot_every, lock_fd), rec.report
+    except BaseException:
+        _release_lock(lock_fd)
+        raise
+
+
+def _take_lock(path):
+    """Exclusive, non-blocking lock on <path>.lock. The kernel drops it when the
+    process dies, so a SIGKILL never leaves the database locked."""
+    if fcntl is None:
+        return None
+    fd = os.open(path + ".lock", os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        raise DatabaseBusy("another open holds {}.lock; close it (or let it exit) first".format(path))
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _release_lock(fd):
+    if fd is not None:
+        os.close(fd)                             # closing the descriptor releases the flock
 
 
 class DB:
-    def __init__(self, path, rec, snapshot_every=SNAPSHOT_MIN):
+    def __init__(self, path, rec, snapshot_every=SNAPSHOT_MIN, lock_fd=None):
         self.path = path
+        self._lock_fd = lock_fd
         self._snapshot_every = snapshot_every
         self._since_snapshot = rec.replayed      # transactions in the log that no snapshot covers yet
         self.snapshot_error = None               # last snapshot failure (the data itself is never affected)
+        self.compact_listener = None             # optional callable("begin" | "end"), used by serve
         self._lock = threading.Lock()
         self._index = rec.index
         self._end = rec.end                 # the tracked end offset; the writer never trusts the file position
@@ -98,7 +135,19 @@ class DB:
             return len(self._index)
 
     def compact(self):
-        raise NotImplementedError("compaction is Phase 7; its order is not frozen yet (CLAUDE.md section 11)")
+        """Rewrite the file with only the live keys (CLAUDE.md section 11).
+        Returns (bytes_before, bytes_after)."""
+        with self._lock:
+            self._check_usable(write=True)
+            before = self._end
+            entries = self._live_entries(())
+            plan = _plan_batches(entries)
+            expected = _planned_size(plan)
+            if self._max_bytes and expected > self._max_bytes:
+                raise CompactionFailed("compacted file would be {} bytes, max_bytes is {}".format(
+                    expected, self._max_bytes))                       # E4: fail before writing anything
+            self._compact_locked(entries, plan, expected)
+            return before, self._end
 
     def close(self):
         """Close both handles. Writes nothing: every committed transaction is already fsynced."""
@@ -109,6 +158,8 @@ class DB:
             self._closed = True
             self._w.close()
             self._r.close()
+            _release_lock(self._lock_fd)
+            self._lock_fd = None
 
     def __enter__(self):
         return self
@@ -123,8 +174,8 @@ class DB:
             self._check_usable(write=True)
             clean, size = layout.validate_ops(ops)                    # 1. validate the WHOLE request
             if self._max_bytes and self._end + size > self._max_bytes:
-                raise SizeCapReached("transaction needs {} bytes; file is {} of max_bytes {}".format(
-                    size, self._end, self._max_bytes))
+                self._commit_by_compaction(clean, size)              # E5: compact WITH this change, or refuse
+                return
             start = self._end                                         # 2. remember the end offset E
             pause("write.before-body")
             chunks, body_len, crc = layout.encode_validated_body(clean)
@@ -150,9 +201,111 @@ class DB:
             self._end = start + size
             pause("write.after-index")
             self._since_snapshot += 1
-            if self._snapshot_every and self._since_snapshot >= max(self._snapshot_every, len(self._index) // 4):
+            if self._snapshot_every and self._since_snapshot >= max(self._snapshot_every,
+                                                                     len(self._index) // SNAPSHOT_DIVISOR):
                 self._snapshot(layout.encode_commit(body_len, crc))
         # 8. the lock is released; returning is the success the caller (serve) ACKs
+
+    # ---- compaction (CLAUDE.md section 11) ----------------------------------------
+
+    def _live_entries(self, clean):
+        """The live keys after applying `clean` (E5), sorted by their place in the file.
+        Each entry: (key, value_offset or None, value_length, value bytes or None)."""
+        bits, mask = layout.LOCATION_BITS, layout.LOCATION_MASK
+        state = {key: (loc >> bits, loc & mask, None) for key, loc in self._index.items()}
+        for op, key, value in clean:
+            if op == PUT:
+                state[key] = (None, len(value), value)
+            else:
+                state.pop(key, None)
+        entries = [(key, off, length, value) for key, (off, length, value) in state.items()]
+        entries.sort(key=lambda e: (e[1] is None, e[1] or 0))  # file order first, then new values
+        return entries
+
+    def _commit_by_compaction(self, clean, size):
+        """E5: the write does not fit. Compact with it applied if that fits, else refuse.
+        The os.replace in _compact_locked step 7 is then this write's commit point."""
+        entries = self._live_entries(clean)
+        plan = _plan_batches(entries)
+        expected = _planned_size(plan)
+        if expected > self._max_bytes:
+            raise SizeCapReached("transaction needs {} bytes; file is {} of max_bytes {}; even compacted "
+                                 "with it the file would be {} bytes".format(size, self._end, self._max_bytes, expected))
+        self._compact_locked(entries, plan, expected)
+
+    def _notify(self, event):
+        if self.compact_listener is not None:
+            try:
+                self.compact_listener(event)
+            except Exception:
+                pass
+
+    def _compact_locked(self, entries, plan, expected):
+        """Steps 1-10 of CLAUDE.md section 11. The caller holds self._lock."""
+        self._notify("begin")
+        tmp = self.path + recovery.COMPACT_TMP_SUFFIX
+        try:
+            recovery._remove_quietly(tmp)                                     # 1. a leftover is never trusted
+            with open(tmp, "xb", buffering=0) as f:                           # 2. same folder, own header
+                _write_fully(f, layout.encode_header(self._max_bytes))
+                for number, batch in enumerate(plan):
+                    ops = [(PUT, key, value if value is not None else self._read_at(off, length))
+                           for key, off, length, value in batch]
+                    chunks, body_len, crc = layout.encode_validated_body(ops)
+                    for chunk in chunks:
+                        _write_fully(f, chunk)
+                    _write_fully(f, layout.encode_commit(body_len, crc))
+                    if number == 0:
+                        pause("compact.mid-write")
+                os.fsync(f.fileno())                                          # 3. on disk, then closed
+            scan, new_index, size = recovery.read_index(tmp)                  # 4. validate by reading back
+            problem = None
+            if scan.kind != recovery.CLEAN:
+                problem = "scan of the new file ended {} at {}: {}".format(scan.kind, scan.offset, scan.reason)
+            elif size != expected:
+                problem = "new file is {} bytes, expected {}".format(size, expected)
+            elif len(new_index) != len(entries):
+                problem = "new file has {} keys, expected {}".format(len(new_index), len(entries))
+            else:
+                mask = layout.LOCATION_MASK
+                for key, off, length, value in entries:
+                    loc = new_index.get(key)
+                    if loc is None or (loc & mask) != length:
+                        problem = "key {!r} is missing or has the wrong length in the new file".format(key[:40])
+                        break
+            if problem:
+                raise CompactionFailed(problem)
+        except BaseException as exc:
+            recovery._remove_quietly(tmp)                                     # the original is untouched
+            self._notify("end")
+            if isinstance(exc, (CompactionFailed, KeyboardInterrupt, SystemExit)):
+                raise
+            raise CompactionFailed("compaction stopped before the swap: {!r}".format(exc)) from exc
+        try:
+            snapshot.remove(self.path)                                        # 5. old offsets: gone
+            self._w.close()                                                   # 6. close BOTH handles
+            self._r.close()
+            pause("compact.before-swap")
+            os.replace(tmp, self.path)                                        # 7. the only switch
+            pause("compact.after-swap")
+            recovery.fsync_dir(self.path)                                     # 8. the rename is durable
+            self._w = open(self.path, "r+b", buffering=0)                     # 9. reopen, new offsets
+            self._r = open(self.path, "rb", buffering=0)
+            actual = os.fstat(self._w.fileno()).st_size
+            if actual != size:
+                raise DatabaseFailed("file is {} bytes after the swap, expected {}".format(actual, size))
+            self._index = new_index
+            self._end = size
+            self._since_snapshot = 0
+            pause("compact.before-cleanup")
+        except BaseException as exc:
+            self._failed = "compaction failed after it closed the handles: {!r}".format(exc)
+            self._broken = True
+            self._notify("end")
+            raise DatabaseFailed(self._failed) from exc
+        if self._snapshot_every and self._index:                              # 10. cleanup: fresh snapshot
+            self._snapshot(self._read_at(self._end - snapshot.TAIL_SIZE, snapshot.TAIL_SIZE))
+        self._notify("end")
 
     def _snapshot(self, log_tail):
         """After a COMMITTED transaction: save the index to <path>.idx (a cache).
@@ -216,5 +369,39 @@ class DB:
     def _check_usable(self, write):
         if self._closed:
             raise DatabaseFailed("database is closed")
+        if getattr(self, "_broken", False):
+            raise DatabaseFailed("database handles were lost in a failed compaction; reopen it: " + self._failed)
         if write and self._failed:
             raise DatabaseFailed("database failed earlier and refuses writes until reopened: " + self._failed)
+
+
+def _write_fully(f, data):
+    """Unbuffered writes can be short: loop until every byte is out."""
+    view = memoryview(data)
+    while view:
+        n = f.write(view)
+        if not n:
+            raise OSError("write returned {!r}".format(n))
+        view = view[n:]
+
+
+def _plan_batches(entries):
+    """Split live entries into transactions of at most COMPACT_BATCH_OPS ops and
+    COMPACT_BATCH_BYTES value bytes (at least one op each)."""
+    plan, batch, value_bytes = [], [], 0
+    for entry in entries:
+        if batch and (len(batch) >= COMPACT_BATCH_OPS or value_bytes + entry[2] > COMPACT_BATCH_BYTES):
+            plan.append(batch)
+            batch, value_bytes = [], 0
+        batch.append(entry)
+        value_bytes += entry[2]
+    if batch:
+        plan.append(batch)
+    return plan
+
+
+def _planned_size(plan):
+    """Exact size of the compacted file: header + per batch 20 + per op 7 + key + value."""
+    return layout.HEADER_SIZE + sum(
+        layout.TXN_OVERHEAD + sum(layout.OP_HEADER.size + len(key) + length for key, _, length, _ in batch)
+        for batch in plan)

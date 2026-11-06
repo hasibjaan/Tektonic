@@ -137,3 +137,12 @@ def remove_leftover(db_path):
         return True
     except FileNotFoundError:
         return False
+
+
+def remove(db_path):
+    """Delete <path>.idx (compaction step 5: its offsets point into the old file)."""
+    try:
+        os.remove(path_for(db_path))
+        return True
+    except FileNotFoundError:
+        return False
