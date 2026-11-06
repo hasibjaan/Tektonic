@@ -34,7 +34,8 @@ Each row is the pause point at that line (row 7 has none). Rows 1–6 and 8–15
 2. **Python recovery speed depends on the snapshot:** replaying 1,000,000 single-put transactions takes 2.889 s; with the snapshot the slowest open was 1.253 s (limit 2 s), warm cache only — cold cache NOT TESTED (`evidence/recovery-benchmark.md`).
 3. **Our tests cannot see a missing fsync:** it is the one planted bug that survives (`evidence/engine-mutation-check-phase7.txt`).
 4. **Compaction stops the world,** and under a tight `--max-bytes` E5 may compact on nearly every write; compaction of 1,000,000 live keys is NOT measured.
-5. **Platform and margins:** the lock and the directory fsync are macOS/Linux only (Windows NOT TESTED); `check` takes no lock; with a snapshot, open does not re-check bytes before its offset; the judge's 200-iteration run took 152.2 s of about 180 s.
+5. **Platform and margins:** the lock and the directory fsync are macOS/Linux only (Windows NOT TESTED); `check` takes no lock; with a snapshot, open does not re-check bytes before its offset.
+6. **Torture time (clean clone):** 200 iterations took **181.1 s** of about 180 s; `large-values` took **38 min** for 100, as the file grew to 4.2 GB and each iteration copies and re-reads it (`evidence/final-runs.md`).
 
 ## 4. What we tried that failed
 
@@ -47,6 +48,6 @@ Each row is the pause point at that line (row 7 has none). Rows 1–6 and 8–15
 
 ## 5. If we had 24 more hours
 
-1. **Power loss:** an `F_FULLFSYNC` option, its measured cost, and real power-cut tests (VM hard reset).
-2. **Compaction that does not stop the world:** copy live data without the lock, then catch up the newer transactions under it; measure with 1,000,000 live keys.
-3. **Harder measurements:** cold-cache recovery, one 500-kill run in a single process, and Windows with a `msvcrt` lock.
+1. **Power loss:** an `F_FULLFSYNC` option, its cost, and real power-cut tests.
+2. **Compaction without stopping the world:** copy without the lock, catch up the tail under it.
+3. **Harder tests:** cold-cache recovery, faster `large-values` torture, Windows.

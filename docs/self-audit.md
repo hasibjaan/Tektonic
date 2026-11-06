@@ -27,3 +27,22 @@ For each one, every claim (disk state, mechanism, file and function, line, test)
 | Crash 14 | `db.py:288`, original untouched, temp complete, old `.idx` deleted, full replay | `db.py:283-289` (steps 5-6 before the pause), `recovery.recover` | Match |
 
 **Summary:** 10 items checked, 5 matched, 5 mismatched. All five were documentation errors (one wrong, one incomplete, one overclaim, one stale, one wording); no code was wrong. While fixing mismatch 2, the same gap was found and fixed in ARCHITECTURE.md Part 3 "Durability" (outside the sample).
+
+# Phase 9 repeat of the self-audit (final code, commit `1ef9754`)
+
+**New random sample**, seeded with the final commit hash so it cannot be picked by hand: `random.Random(0x1ef9754)`, same command as above → proof rows **A6, B2, B6, E1, E4, F1**, crash points **5, 8, 10, 14**.
+
+| Item | Claim checked | Code read | Result |
+|---|---|---|---|
+| Row A6 | Delete uses the same write path; `WriteKillTest.test_delete` at all 7 write pause points | `db.py` `DB.delete` → `_commit`; `tests/test_crash.py` `PUT_EXPECT` (7 points) | Match |
+| Row B2 | No complete marker → nothing applied; `test_batch_of_ten` [after-body, after-body-sync]; every-byte cut | `db.py:189-191`; `tests/test_db.py` `BatchCutTest` | Match |
+| Row B6 | Mechanism said "Recovery under 2 s NOT measured" | `evidence/recovery-benchmark-keys8.txt` | **Mismatch 6 (stale):** it was measured in Phase 6 (1.073 s, and the row's own "Verified by" says so). Fixed |
+| Row E1 | Refused before any byte is written, after checking the compacted size | `db.py:176-178` → `_commit_by_compaction` | Match |
+| Row E4 | "a compacted file over max_bytes … aborts before the swap … temporary file deleted" | `db.py` `DB.compact` lines 146-147 | **Mismatch 7 (imprecise):** an over-cap result is refused BEFORE any temporary file exists (`CompactionFailed` from `compact`, `SizeCapReached` inside E5); only a write error deletes a temporary file. Fixed |
+| Row F1 | "500 in one run: not run yet" | `evidence/final/torture-i500-s880011.txt` | **Mismatch 8 (stale):** the 500-kill run in one process now exists (PASS 500/500 in the clean clone). Updated |
+| Crash 5 | `db.py:193` | `db.py:192-193` | Match |
+| Crash 8 | `recovery.py:271`, the scan only reads | `recovery.py:271`, `_scan_fd` (read-only mmap) | Match (the temporary files are deleted before line 271; the data file is not changed) |
+| Crash 10 | `recovery.py:284`, writes `0xEE` | `recovery.py:284-286` | Match |
+| Crash 14 | `db.py:288` | `db.py:285-289` | Match |
+
+**Summary:** 10 items, 7 match, 3 documentation mismatches fixed (two stale, one imprecise). No code was wrong.
