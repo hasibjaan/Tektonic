@@ -1,89 +1,97 @@
-%% Architecture diagram — Mermaid source. FIRST DRAFT from the Phase 1 design.
-%% Nothing here is implemented yet. "planned:" names the file where it will live.
-%% Compaction order is NOT frozen until Phase 7; it is shown as a placeholder.
+%% Architecture of the crash-safe key-value store — FINAL (Phase 8). Mermaid source.
+%% Every box names the file and function that implements it.
 flowchart TD
 
   subgraph CLIENTS["Clients"]
-    CLI["kvdb.py commands<br/>open put get del batch dump check"]
-    SERVE["kvdb.py serve<br/>reader thread + ThreadPoolExecutor (≥2)<br/>stdout under a lock, flush every line"]
+    CLI["kvdb.py commands: open put get del batch dump check compact"]
+    SERVE["kvdb.py serve: 1 reader thread + 4 workers, stdout lines under a lock, flushed"]
   end
 
-  subgraph ENGINE["Engine — src/kv (planned)"]
-    API["Client API — db.py<br/>open · put · get · delete · batch · compact · close"]
-    LOCK{{"ONE global lock<br/>threading.Lock<br/>held by put/delete/batch, get, compact, close"}}
-    GUARD["Disk-full guard — db.py<br/>end + txn size ≤ max_bytes ?<br/>else SizeCapReached, file untouched"]
-    WP["Write path — db.py<br/>ONE path for put, delete, batch"]
-    ENC["Layout — layout.py<br/>encode / decode, Struct '#lt;...', zlib.crc32"]
-    IDX[("In-memory index — dict<br/>key bytes → (value_offset #lt;#lt; 21) | value_length")]
-    REC["Recovery — recovery.py<br/>scan, cut torn tail, restore trailer; check (read-only)"]
-    COMP["Compaction — db.py (Phase 7, order not frozen)"]
-    PAUSE["Pause points — pause.py<br/>KVDB_PAUSE_AT"]
+  subgraph ENGINE["Engine: src/kv"]
+    OPEN["open_db (db.py): 1. flock on path.lock, 2. recovery.recover"]
+    FLOCK{{"File lock: fcntl.flock on path.lock, one open at a time, freed when the process dies"}}
+    GLOCK{{"Global lock: threading.Lock, held by put/delete/batch, get, compact, close"}}
+    GUARD["Size cap guard (DB._commit): end + size over max_bytes? then E5: compact WITH the write, else SizeCapReached"]
+    WP["One write path: DB._commit, used by put, delete, batch"]
+    LAYOUT["layout.py: encode_body, encode_commit, decode_txn"]
+    IDX[("In-memory index: dict key to offset shl 21 or length")]
+    REC["recovery.py: recover, scan (fast path + decode_txn); check is read-only"]
+    SNAP["snapshot.py: index snapshot path.idx (a cache)"]
+    COMP["DB.compact / _compact_locked: section 11"]
+    PAUSE["pause.py: KVDB_PAUSE_AT pause points"]
   end
 
-  subgraph DISK["Disk — one data file"]
-    WH["write handle<br/>r+b, buffering=0"]
-    RH["read handle<br/>rb, buffering=0, used by get"]
-    FILE[("data file")]
+  subgraph FILES["Files next to the database"]
+    DATA[("path: the log")]
+    IDXF[("path.idx: snapshot")]
+    LOCKF[("path.lock: empty")]
+    TMPS[("path.compact.tmp / path.idx.tmp: temporary, deleted at open")]
   end
 
-  CLI --> API
-  SERVE --> API
-  API --> LOCK
-  LOCK --> GUARD --> WP --> ENC
-  WP --> WH --> FILE
-  API -- get --> IDX
-  IDX -- offset, length --> RH --> FILE
-  API -- open --> REC --> FILE
+  CLI --> OPEN
+  SERVE --> OPEN
+  OPEN --> FLOCK --> LOCKF
+  OPEN --> REC
+  SERVE --> GLOCK
+  CLI --> GLOCK
+  GLOCK --> GUARD --> WP --> LAYOUT
+  WP -- "write handle r+b, unbuffered" --> DATA
+  WP -- "after commit, every max(10000, keys/8) txns" --> SNAP --> IDXF
+  GLOCK -- "get: read handle rb, unbuffered" --> IDX
+  REC -- "load if it matches the log" --> IDXF
+  REC -- "scan from E_c or 16" --> DATA
   REC -- rebuilds --> IDX
-  API -- compact --> COMP --> FILE
+  GLOCK --> COMP --> TMPS
+  COMP -- "os.replace" --> DATA
   PAUSE -.-> WP
   PAUSE -.-> REC
   PAUSE -.-> COMP
+  PAUSE -.-> SNAP
 
-  subgraph LAYOUT["On-disk layout — little-endian, sizes in bytes"]
-    L0["File header 16<br/>magic 'KVDB' 4 · version 2 = 1 · flags 2 = 0 · max_bytes 8"]
-    L1["Txn header 3<br/>type 1 = 0xA1 · op_count 2 (1–10,000)"]
-    L2["Each op 7 + key + value<br/>op 1 (1 put, 2 del) · key_len 2 (1–1,024) · val_len 4 (0–1,048,576) · key · value"]
-    L3["Commit marker 16<br/>magic 'CMIT' 4 · body_len 8 · crc32 4 over txn header + ops"]
+  subgraph LAYOUTBOX["On-disk layout, little-endian, sizes in bytes"]
+    L0["File header 16: magic KVDB 4, version 2 = 1, flags 2 = 0, max_bytes 8"]
+    L1["Transaction header 3: type 1 = 0xA1, op_count 2 = 1 to 10000"]
+    L2["Each op 7 + key + value: op 1 (1 put, 2 del), key_len 2 = 1 to 1024, val_len 4 = 0 to 1048576, key, value"]
+    L3["Commit marker 16: magic CMIT 4, body_len 8, crc32 4 of header + ops"]
     L4["Trailer 1 = 0xEE"]
     L0 --> L1 --> L2 --> L3 --> L4
-    L4 -- next transaction --> L1
+    L4 -- "next transaction" --> L1
   end
 
-  subgraph WRITE["Write order — numbered (CLAUDE.md §9)"]
+  subgraph WRITE["Write order, DB._commit (CLAUDE.md section 9)"]
     W0["take the global lock"]
-    W1["1 validate everything, incl. cap → error = file untouched"]
+    W1["1 validate everything incl. the cap, error = file untouched"]
     W2["2 remember end offset E"]
-    W3["3 seek E, write txn header + ops (loop)"]
-    W4["4 os.fsync — body on disk"]
-    W5["5 write commit marker + trailer (loop)"]
-    W6["6 os.fsync — COMMITTED"]
-    W7["7 apply ops to dict in list order"]
-    W8["8 release lock, return → ACK + flush"]
-    WX["error in 3–6: truncate to E, os.fsync, raise<br/>truncate fails → database failed"]
+    W3["3 seek E, write body (loop)"]
+    W4["4 os.fsync: body on disk"]
+    W5["5 write commit marker + trailer"]
+    W6["6 os.fsync: COMMITTED"]
+    W7["7 apply to the dict in list order"]
+    W8["8 release lock, return: serve prints ACK"]
+    WX["error in 3 to 6: truncate to E, os.fsync, raise; that fails too: database failed"]
     W0 --> W1 --> W2 --> W3 --> W4 --> W5 --> W6 --> W7 --> W8
     W3 -.-> WX
-    W4 -.-> WX
-    W5 -.-> WX
     W6 -.-> WX
   end
 
-  subgraph RECOVERY["Recovery flow — open (CLAUDE.md §10)"]
+  subgraph RECOVERY["Recovery flow, recovery.recover (section 10)"]
     R0["open file"]
     R1{"exists?"}
-    R1N["create header, fsync file + dir"]
-    R2{"≥ 16 bytes?"}
-    R2S{"prefix of a valid header?"}
+    R1N["create header, fsync file + folder"]
+    R2{"16 bytes or more?"}
+    R2S{"prefix of our header?"}
     R2F["fresh header, fsync"]
-    R3{"magic KVDB, version 1, flags 0?"}
-    RNO["refuse: NotOurFile — untouched"]
-    R4["scan transactions from 16<br/>stage ops, apply only after a valid marker"]
-    R5{"how did the scan stop?"}
+    R3{"magic, version, flags OK?"}
+    RNO["refuse: NotOurFile, untouched"]
+    RT0["delete path.compact.tmp and path.idx.tmp: half-done compaction or snapshot"]
+    RS{"path.idx valid for this log?"}
+    RSY["index = snapshot, scan from E_c"]
+    RSN["index empty, scan from 16"]
+    R5{"how did the scan end?"}
     RT["TORN: ftruncate to absolute offset, fsync"]
     RM["TRAILER MISSING: write 0xEE, fsync"]
-    RC["CORRUPT: refuse — untouched"]
-    RH2["half-done compaction: Phase 7"]
-    RR["ready: report keys, ms, bytes cut, trailer restored"]
+    RC["CORRUPT: refuse, untouched"]
+    RR["ready: keys, ms, bytes cut, trailer restored, snapshot"]
     R0 --> R1
     R1 -- no --> R1N --> RR
     R1 -- yes --> R2
@@ -92,9 +100,25 @@ flowchart TD
     R2S -- no --> RNO
     R2 -- yes --> R3
     R3 -- no --> RNO
-    R3 -- yes --> RH2 --> R4 --> R5
-    R5 -- clean end --> RR
-    R5 -- torn tail --> RT --> RR
-    R5 -- ends at a marker --> RM --> RR
-    R5 -- bad byte --> RC
+    R3 -- yes --> RT0 --> RS
+    RS -- yes --> RSY --> R5
+    RS -- no --> RSN --> R5
+    R5 -- clean --> RR
+    R5 -- "torn tail" --> RT --> RR
+    R5 -- "ends at a marker" --> RM --> RR
+    R5 -- "bad byte" --> RC
+  end
+
+  subgraph COMPACTION["Compaction flow, DB._compact_locked (section 11), global lock held"]
+    C1["1 delete leftover path.compact.tmp"]
+    C2["2 write live keys to path.compact.tmp as batches, same max_bytes"]
+    C3["3 os.fsync, close"]
+    C4["4 validate: full read-back scan, else delete temp + CompactionFailed"]
+    C5["5 delete old path.idx"]
+    C6["6 close BOTH handles"]
+    C7["7 os.replace temp onto path: the only switch"]
+    C8["8 os.fsync the folder"]
+    C9["9 reopen handles, index from step 4"]
+    C10["10 write a fresh snapshot, release lock"]
+    C1 --> C2 --> C3 --> C4 --> C5 --> C6 --> C7 --> C8 --> C9 --> C10
   end
