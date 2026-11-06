@@ -1,0 +1,13 @@
+# Phase 6 worst case for the snapshot: the last snapshot covers 750,000 of 1,000,000 single-put transactions.
+# Command: python3 tools/worst_case_snapshot.py
+
+captured 2026-11-06 18:35:46 IST
+snapshot covers 750,000 keys, E_c = 35,250,016; log end = 47,000,016
+run 1: serve start -> READY 1.300 s   (READY keys=1000000 recovery_ms=1209 bytes_cut=0 trailer_restored=no snapshot=yes)
+run 2: serve start -> READY 1.501 s   (READY keys=1000000 recovery_ms=1406 bytes_cut=0 trailer_restored=no snapshot=yes)
+run 3: serve start -> READY 1.582 s   (READY keys=1000000 recovery_ms=1486 bytes_cut=0 trailer_restored=no snapshot=yes)
+run 4: serve start -> READY 1.279 s   (READY keys=1000000 recovery_ms=1180 bytes_cut=0 trailer_restored=no snapshot=yes)
+run 5: serve start -> READY 1.236 s   (READY keys=1000000 recovery_ms=1147 bytes_cut=0 trailer_restored=no snapshot=yes)
+transactions replayed after the snapshot: 250,000; keys: 1,000,000
+slowest: 1.582 s (limit 2 s)
+exit=0

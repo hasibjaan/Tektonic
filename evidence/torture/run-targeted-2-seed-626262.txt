@@ -1,0 +1,33 @@
+# TARGETED kills after the Phase 6 snapshot change (reported separately from random runs).
+# Command: python3 torture.py --iterations 2 --seed 626262 --mode targeted
+# Captured 2026-11-06 18:36:40 IST
+
+torture: mode targeted seed 626262 rounds 2 kvdb kvdb.py
+round 1 create.mid-header          PASS       no write in flight; all ACKed data intact
+round 1 write.before-body          PASS       unanswered w1-9 -> absent
+round 1 write.mid-body             PASS       unanswered w1-10 -> absent
+round 1 write.after-body           PASS       unanswered w1-13 -> absent
+round 1 write.after-body-sync      PASS       unanswered w1-7 -> absent
+round 1 write.after-marker         PASS       unanswered w1-6 -> applied
+round 1 write.after-commit-sync    PASS       unanswered w1-7 -> applied
+round 1 write.after-index          PASS       unanswered w1-7 -> applied
+round 1 recovery.replay            PASS       unanswered w1-18 -> absent
+round 1 recovery.before-cut        PASS       unanswered w1-14 -> absent
+round 1 recovery.after-cut         PASS       unanswered w1-18 -> absent
+round 1 recovery.before-trailer    PASS       no write in flight; all ACKed data intact
+round 1 close                      PASS       no write in flight; all ACKed data intact
+round 2 create.mid-header          PASS       no write in flight; all ACKed data intact
+round 2 write.before-body          PASS       unanswered w1-9 -> absent
+round 2 write.mid-body             PASS       unanswered w1-6 -> absent
+round 2 write.after-body           PASS       unanswered w1-7 -> absent
+round 2 write.after-body-sync      PASS       unanswered w1-8 -> absent
+round 2 write.after-marker         PASS       unanswered w1-10 -> applied
+round 2 write.after-commit-sync    PASS       unanswered w1-15 -> applied
+round 2 write.after-index          PASS       unanswered w1-11 -> applied
+round 2 recovery.replay            PASS       unanswered w1-7 -> absent
+round 2 recovery.before-cut        PASS       unanswered w1-10 -> absent
+round 2 recovery.after-cut         PASS       unanswered w1-10 -> absent
+round 2 recovery.before-trailer    PASS       no write in flight; all ACKed data intact
+round 2 close                      PASS       no write in flight; all ACKed data intact
+TARGETED PASS 26/26 (not tested: compact.after-swap, compact.before-cleanup, compact.before-swap, compact.mid-write, snapshot.after-swap, snapshot.before-swap)
+exit=0

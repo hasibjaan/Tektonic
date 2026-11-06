@@ -1,0 +1,32 @@
+# Phase 6 AFTER step d (index snapshot <path>.idx): 1,000,000 keys REBUILT through serve, one transaction per key, then serve hard-killed.
+# Command: python3 torture.py --seed 6002 --mode scale --keys 1000000 --runs 5
+# Captured 2026-11-06 18:23:55 IST; load average before the run: 2.69 4.22 6.16
+
+torture: mode scale keys 1,000,000 build single runs 5 kvdb kvdb.py
+  built 100,000 of 1,000,000 requests (44 s)
+  built 200,000 of 1,000,000 requests (87 s)
+  built 300,000 of 1,000,000 requests (129 s)
+  built 400,000 of 1,000,000 requests (171 s)
+  built 500,000 of 1,000,000 requests (213 s)
+  built 600,000 of 1,000,000 requests (255 s)
+  built 700,000 of 1,000,000 requests (297 s)
+  built 800,000 of 1,000,000 requests (339 s)
+  built 900,000 of 1,000,000 requests (380 s)
+built 1,000,000 keys through serve (one transaction per key) in 423 s, then hard-killed serve
+file size: 47,000,016 bytes
+run 1: serve start -> READY 1.070 s   (READY keys=1000000 recovery_ms=899 bytes_cut=0 trailer_restored=no snapshot=yes)
+  contents checked outside the timing: all 1,000,000 keys correct
+run 2: serve start -> READY 0.981 s   (READY keys=1000000 recovery_ms=884 bytes_cut=0 trailer_restored=no snapshot=yes)
+run 3: serve start -> READY 0.961 s   (READY keys=1000000 recovery_ms=866 bytes_cut=0 trailer_restored=no snapshot=yes)
+run 4: serve start -> READY 0.967 s   (READY keys=1000000 recovery_ms=873 bytes_cut=0 trailer_restored=no snapshot=yes)
+run 5: serve start -> READY 0.953 s   (READY keys=1000000 recovery_ms=860 bytes_cut=0 trailer_restored=no snapshot=yes)
+  contents checked outside the timing: all 1,000,000 keys correct
+slowest of 5 runs: 1.070 s (limit 2 s) -> PASS
+B6: 10,000-op batch killed at write.mid-body (47,085,018 bytes on disk), open 0.987 s (READY keys=1000000 recovery_ms=896 bytes_cut=85002 trailer_restored=no snapshot=yes); none of the batch visible, all 1,000,000 keys correct
+real 459.30
+user 192.89
+sys 177.79
+exit=0
+total 128800
+-rw-r--r--@ 1 apple  staff  47000016 Nov  6 18:31 db.kv
+-rw-r--r--@ 1 apple  staff  18940873 Nov  6 18:30 db.kv.idx

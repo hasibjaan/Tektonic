@@ -1,0 +1,29 @@
+# Phase 6 BASELINE (code before any recovery fix): 1,000,000 keys built through serve, one transaction per key.
+# Command: python3 torture.py --seed 6001 --mode scale --keys 1000000 --runs 5
+# Captured 2026-11-06 16:52:14 IST, commit 2a05956 + uncommitted Phase 5/6 work
+
+torture: mode scale keys 1,000,000 build single runs 5 kvdb kvdb.py
+  built 100,000 of 1,000,000 requests (43 s)
+  built 200,000 of 1,000,000 requests (86 s)
+  built 300,000 of 1,000,000 requests (127 s)
+  built 400,000 of 1,000,000 requests (168 s)
+  built 500,000 of 1,000,000 requests (210 s)
+  built 600,000 of 1,000,000 requests (252 s)
+  built 700,000 of 1,000,000 requests (294 s)
+  built 800,000 of 1,000,000 requests (335 s)
+  built 900,000 of 1,000,000 requests (377 s)
+built 1,000,000 keys through serve (one transaction per key) in 418 s, then hard-killed serve
+file size: 47,000,016 bytes
+run 1: serve start -> READY 4.857 s   (READY keys=1000000 recovery_ms=4668 bytes_cut=0 trailer_restored=no)
+  contents checked outside the timing: all 1,000,000 keys correct
+run 2: serve start -> READY 4.541 s   (READY keys=1000000 recovery_ms=4453 bytes_cut=0 trailer_restored=no)
+run 3: serve start -> READY 4.600 s   (READY keys=1000000 recovery_ms=4508 bytes_cut=0 trailer_restored=no)
+run 4: serve start -> READY 4.606 s   (READY keys=1000000 recovery_ms=4509 bytes_cut=0 trailer_restored=no)
+run 5: serve start -> READY 4.477 s   (READY keys=1000000 recovery_ms=4392 bytes_cut=0 trailer_restored=no)
+  contents checked outside the timing: all 1,000,000 keys correct
+slowest of 5 runs: 4.857 s (limit 2 s) -> FAIL
+B6: 10,000-op batch killed at write.mid-body (47,085,018 bytes on disk), open 4.814 s (READY keys=1000000 recovery_ms=4725 bytes_cut=85002 trailer_restored=no); none of the batch visible, all 1,000,000 keys correct
+real 484.71
+user 224.67
+sys 173.71
+exit=1
