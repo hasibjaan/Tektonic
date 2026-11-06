@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.kv
+*.tmp
+.torture-work/
+.claude/settings.local.json
+rehearsal/
