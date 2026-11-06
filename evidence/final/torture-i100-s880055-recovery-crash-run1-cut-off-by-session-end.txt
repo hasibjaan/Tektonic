@@ -1,0 +1,15 @@
+# Phase 9, clean clone of commit 1ef9754 from GitHub, in /Users/apple/Documents/Hackathons/srinathon 3.0/outcome/clean-clone-phase9
+# Command (run in the clone, unchanged judge form): ./torture --iterations 100 --seed 880055 --mode recovery-crash
+# Captured 2026-11-06 23:02:17 IST; load average: 9.50 4.70 3.74
+
+torture: mode recovery-crash seed 880055 iterations 100 writers 3 kvdb kvdb.py
+prefilled 100,000 keys through serve (writer 0, ACKed batches)
+iter    1 seed 880055 kill_ms  109.4 in_flight 3 acks    257 keys 100037 restarts R R R PASS (2.36 s)
+iter    2 seed 880055 kill_ms  122.0 in_flight 3 acks    529 keys 100035 restarts R R R PASS (2.32 s)
+iter    3 seed 880055 kill_ms  116.2 in_flight 3 acks    789 keys 100039 restarts R R R PASS (2.26 s)
+iter    4 seed 880055 kill_ms  157.3 in_flight 3 acks   1150 keys 100039 restarts s R R PASS (2.24 s)
+iter    5 seed 880055 kill_ms  196.6 in_flight 3 acks   1589 keys 100039 restarts R R R PASS (2.36 s)
+iter    6 seed 880055 kill_ms   33.1 in_flight 3 acks   1660 keys 100036 restarts R R s PASS (2.20 s)
+iter    7 seed 880055 kill_ms   85.8 in_flight 3 acks   1845 keys 100038 restarts R R R PASS (2.26 s)
+iter    8 seed 880055 kill_ms  394.9 in_flight 3 acks   2733 keys 100038 restarts R R R PASS (2.61 s)
+iter    9 seed 880055 kill_ms  176.7 in_flight 3 acks   3115 keys 100039 restarts R R R PASS (2.38 s)

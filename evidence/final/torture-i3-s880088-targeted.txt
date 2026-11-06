@@ -1,0 +1,61 @@
+# Phase 9, clean clone of commit 1ef9754 from GitHub, in /Users/apple/Documents/Hackathons/srinathon 3.0/outcome/clean-clone-phase9
+# Command (run in the clone, unchanged judge form): ./torture --iterations 3 --seed 880088 --mode targeted
+# Captured 2026-11-06 23:23:09 IST; load average: 2.65 2.62 2.86
+
+torture: mode targeted seed 880088 rounds 3 kvdb kvdb.py
+round 1 create.mid-header          PASS       no write in flight; all ACKed data intact
+round 1 write.before-body          PASS       unanswered w1-8 -> absent
+round 1 write.mid-body             PASS       unanswered w1-7 -> absent
+round 1 write.after-body           PASS       unanswered w1-8 -> absent
+round 1 write.after-body-sync      PASS       unanswered w1-10 -> absent
+round 1 write.after-marker         PASS       unanswered w1-12 -> applied
+round 1 write.after-commit-sync    PASS       unanswered w1-13 -> applied
+round 1 write.after-index          PASS       unanswered w1-10 -> applied
+round 1 recovery.replay            PASS       unanswered w1-10 -> absent
+round 1 recovery.before-cut        PASS       unanswered w1-12 -> absent
+round 1 recovery.after-cut         PASS       unanswered w1-10 -> absent
+round 1 recovery.before-trailer    PASS       no write in flight; all ACKed data intact
+round 1 compact.mid-write          PASS       no write in flight; all ACKed data intact
+round 1 compact.before-swap        PASS       no write in flight; all ACKed data intact
+round 1 compact.after-swap         PASS       no write in flight; all ACKed data intact
+round 1 compact.before-cleanup     PASS       no write in flight; all ACKed data intact
+round 1 close                      PASS       no write in flight; all ACKed data intact
+round 2 create.mid-header          PASS       no write in flight; all ACKed data intact
+round 2 write.before-body          PASS       unanswered w1-11 -> absent
+round 2 write.mid-body             PASS       unanswered w1-16 -> absent
+round 2 write.after-body           PASS       unanswered w1-8 -> absent
+round 2 write.after-body-sync      PASS       unanswered w1-11 -> absent
+round 2 write.after-marker         PASS       unanswered w1-10 -> applied
+round 2 write.after-commit-sync    PASS       unanswered w1-14 -> applied
+round 2 write.after-index          PASS       unanswered w1-10 -> applied
+round 2 recovery.replay            PASS       unanswered w1-8 -> absent
+round 2 recovery.before-cut        PASS       unanswered w1-6 -> absent
+round 2 recovery.after-cut         PASS       unanswered w1-11 -> absent
+round 2 recovery.before-trailer    PASS       no write in flight; all ACKed data intact
+round 2 compact.mid-write          PASS       no write in flight; all ACKed data intact
+round 2 compact.before-swap        PASS       no write in flight; all ACKed data intact
+round 2 compact.after-swap         PASS       no write in flight; all ACKed data intact
+round 2 compact.before-cleanup     PASS       no write in flight; all ACKed data intact
+round 2 close                      PASS       no write in flight; all ACKed data intact
+round 3 create.mid-header          PASS       no write in flight; all ACKed data intact
+round 3 write.before-body          PASS       unanswered w1-12 -> absent
+round 3 write.mid-body             PASS       unanswered w1-8 -> absent
+round 3 write.after-body           PASS       unanswered w1-17 -> absent
+round 3 write.after-body-sync      PASS       unanswered w1-8 -> absent
+round 3 write.after-marker         PASS       unanswered w1-7 -> applied
+round 3 write.after-commit-sync    PASS       unanswered w1-16 -> applied
+round 3 write.after-index          PASS       unanswered w1-10 -> applied
+round 3 recovery.replay            PASS       unanswered w1-28 -> absent
+round 3 recovery.before-cut        PASS       unanswered w1-9 -> absent
+round 3 recovery.after-cut         PASS       unanswered w1-9 -> absent
+round 3 recovery.before-trailer    PASS       no write in flight; all ACKed data intact
+round 3 compact.mid-write          PASS       no write in flight; all ACKed data intact
+round 3 compact.before-swap        PASS       no write in flight; all ACKed data intact
+round 3 compact.after-swap         PASS       no write in flight; all ACKed data intact
+round 3 compact.before-cleanup     PASS       no write in flight; all ACKed data intact
+round 3 close                      PASS       no write in flight; all ACKed data intact
+TARGETED PASS 51/51 (not tested: snapshot.after-swap, snapshot.before-swap)
+real 29.37
+user 18.89
+sys 6.05
+exit=0
