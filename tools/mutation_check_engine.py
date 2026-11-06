@@ -2,7 +2,7 @@
 
 Usage: python3 tools/mutation_check_engine.py
 For each bug ("mutant"), src/ and tests/ are copied to .torture-work/mutant-*/,
-one line is changed in the copy, and tests.test_db plus tests.test_crash run
+one line is changed in the copy, and tests.test_db, tests.test_crash and tests.test_snapshot run
 there in a fresh process (the crash tests' child processes import the copy too).
 The real source files are never changed.
 
@@ -37,6 +37,18 @@ MUTANTS = [
     ("index applied as put for a delete", "src/kv/db.py",
      "                self._index.pop(key, None)\n            position += len(value)",
      "                self._index[key] = layout.pack_location(position, 0)\n            position += len(value)", False),
+    ("fast path skips the crc32 check", "src/kv/recovery.py",
+     "                                and crc == crc32(view[p:end])):", "                                ):", False),
+    ("fast path skips the trailer check", "src/kv/recovery.py",
+     "if (magic == b\"CMIT\" and body_len == end - p and trailer == 0xEE", "if (magic == b\"CMIT\" and body_len == end - p", False),
+    ("snapshot: skip the 'matches the log' check", "src/kv/snapshot.py",
+     "    if read_log(covered_end - TAIL_SIZE, TAIL_SIZE) != log_tail:", "    if False:", False),
+    ("snapshot: skip the crc32 check", "src/kv/snapshot.py",
+     "    if zlib.crc32(memoryview(data)[:-4]) != struct.unpack_from(\"<I\", data, len(data) - 4)[0]:", "    if False:", False),
+    ("recovery never starts from the snapshot", "src/kv/recovery.py",
+     "            index, start = loaded.index, loaded.covered_end", "            index, start = {}, layout.HEADER_SIZE", False),
+    ("leftover .idx.tmp not removed at open", "src/kv/recovery.py",
+     "        snapshot.remove_leftover(path)                                     # a killed snapshot write", "        pass", False),
     ("commit fsync removed (step 6)", "src/kv/db.py",
      "os.fsync(self._w.fileno())                            # 6.", "None  # 6.", True),
 ]
@@ -58,7 +70,7 @@ def run_mutant(name, rel, old, new):
             f.write(code.replace(old, new))
         env = dict(os.environ)
         env.pop("KVDB_PAUSE_AT", None)
-        result = subprocess.run([sys.executable, "-m", "unittest", "tests.test_db", "tests.test_crash"],
+        result = subprocess.run([sys.executable, "-m", "unittest", "tests.test_db", "tests.test_crash", "tests.test_snapshot"],
                                 cwd=copy, env=env, capture_output=True, text=True, timeout=900)
         last = [l for l in result.stderr.splitlines() if l.startswith(("OK", "FAILED"))]
         return result.returncode != 0, (last[-1] if last else result.stderr[-300:])

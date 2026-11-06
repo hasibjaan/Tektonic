@@ -244,8 +244,9 @@ def cmd_serve(args):
     err.write("PID {}\n".format(os.getpid()))
     err.flush()
     db, r = open_db(args.path)                         # recovery runs here (pause points too)
-    err.write("READY keys={} recovery_ms={} bytes_cut={} trailer_restored={}\n".format(
-        r.keys, round(r.seconds * 1000), r.bytes_cut, "yes" if r.trailer_restored else "no"))
+    err.write("READY keys={} recovery_ms={} bytes_cut={} trailer_restored={} snapshot={}\n".format(
+        r.keys, round(r.seconds * 1000), r.bytes_cut, "yes" if r.trailer_restored else "no",
+        "yes" if r.snapshot else "no"))
     err.flush()
     try:
         Server(db, sys.stdout.buffer).serve(sys.stdin.buffer)

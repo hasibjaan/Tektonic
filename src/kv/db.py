@@ -9,26 +9,33 @@ import threading
 
 from . import layout
 from . import recovery
+from . import snapshot
 from .errors import DatabaseFailed, InvalidInput, SizeCapReached
 from .pause import pause
 
 PUT = layout.OP_PUT
 DELETE = layout.OP_DELETE
 _OP_NAMES = {PUT: PUT, DELETE: DELETE, "put": PUT, "del": DELETE, "delete": DELETE}
+SNAPSHOT_MIN = 10_000      # take an index snapshot after max(SNAPSHOT_MIN, keys // 4) transactions
 
 
-def open_db(path, max_bytes=0):
+def open_db(path, max_bytes=0, snapshot_every=SNAPSHOT_MIN):
     """Open (or create) the database at path. Returns (db, report).
 
-    report is recovery.Report(keys, seconds, bytes_cut, trailer_restored, created).
+    report is recovery.Report(keys, seconds, bytes_cut, trailer_restored, created, snapshot).
+    snapshot_every: the minimum number of transactions between index snapshots
+    (tests use a small number; 0 turns snapshots off).
     """
     rec = recovery.recover(path, max_bytes)
-    return DB(path, rec), rec.report
+    return DB(path, rec, snapshot_every), rec.report
 
 
 class DB:
-    def __init__(self, path, rec):
+    def __init__(self, path, rec, snapshot_every=SNAPSHOT_MIN):
         self.path = path
+        self._snapshot_every = snapshot_every
+        self._since_snapshot = rec.replayed      # transactions in the log that no snapshot covers yet
+        self.snapshot_error = None               # last snapshot failure (the data itself is never affected)
         self._lock = threading.Lock()
         self._index = rec.index
         self._end = rec.end                 # the tracked end offset; the writer never trusts the file position
@@ -142,7 +149,25 @@ class DB:
             self._apply(clean, start)                                 # 7. apply to the dict in list order
             self._end = start + size
             pause("write.after-index")
+            self._since_snapshot += 1
+            if self._snapshot_every and self._since_snapshot >= max(self._snapshot_every, len(self._index) // 4):
+                self._snapshot(layout.encode_commit(body_len, crc))
         # 8. the lock is released; returning is the success the caller (serve) ACKs
+
+    def _snapshot(self, log_tail):
+        """After a COMMITTED transaction: save the index to <path>.idx (a cache).
+
+        Runs under the lock, after step 7, so the index matches the log up to
+        self._end exactly. A failure here never fails the write: the
+        transaction is already durable; the snapshot is only a shortcut.
+        """
+        try:
+            snapshot.write(self.path, self._index, self._end, log_tail)
+            self.snapshot_error = None
+        except OSError as exc:
+            self.snapshot_error = repr(exc)
+            snapshot.remove_leftover(self.path)
+        self._since_snapshot = 0
 
     def _apply(self, clean, start):
         position = start + layout.TXN_HEADER.size

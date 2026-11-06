@@ -15,6 +15,7 @@ NAMES = frozenset([
     "write.after-marker", "write.after-commit-sync", "write.after-index",
     "recovery.replay", "recovery.before-cut", "recovery.after-cut", "recovery.before-trailer",
     "compact.mid-write", "compact.before-swap", "compact.after-swap", "compact.before-cleanup",
+    "snapshot.before-swap", "snapshot.after-swap",
     "close",
 ])
 

@@ -11,9 +11,12 @@ check() runs the same scan read-only and never repairs anything.
 import collections
 import mmap
 import os
+import struct
 import time
+import zlib
 
 from . import layout
+from . import snapshot
 from .errors import CorruptFile, InvalidInput, NotOurFile
 from .pause import pause
 
@@ -24,8 +27,10 @@ NO_TRAILER = "no-trailer"  # the last transaction is whole but its trailer is cu
 CORRUPT = "corrupt"        # a byte a kill cannot produce: offset = the bad field
 
 Scan = collections.namedtuple("Scan", "kind offset reason transactions")
-Report = collections.namedtuple("Report", "keys seconds bytes_cut trailer_restored created")
-Recovered = collections.namedtuple("Recovered", "index end max_bytes report")
+Report = collections.namedtuple("Report", "keys seconds bytes_cut trailer_restored created snapshot")
+# snapshot: True if the index came from <path>.idx and only the log after it was replayed
+Recovered = collections.namedtuple("Recovered", "index end max_bytes report replayed")
+# replayed: how many transactions were read from the log (after the snapshot, if one was used)
 
 
 # ---- small helpers on raw file descriptors ---------------------------------
@@ -67,52 +72,111 @@ def fsync_dir(path):
 
 # ---- the scan (step 4) -----------------------------------------------------
 
-def scan(buf, index, on_first=None):
+# Fast path (Phase 6): one unpack reads the transaction header AND the first
+# op header; one unpack reads the commit marker AND the trailer. Used only for
+# the normal case; any check that fails hands the transaction to
+# layout.decode_txn, which classifies it exactly (OK, NO_TRAILER, INCOMPLETE,
+# CORRUPT). So the fast path can only ACCEPT what decode_txn would accept.
+_HEAD_AND_OP = struct.Struct("<BHBHI")    # type, op_count, op, key_len, val_len  (3 + 7 = 10 bytes)
+_MARK_AND_TRAILER = struct.Struct("<4sQIB")  # magic, body_len, crc32, trailer       (16 + 1 = 17 bytes)
+
+
+def scan(buf, index, on_first=None, start=layout.HEADER_SIZE):
     """Walk every transaction from offset 16 of buf (the whole file).
 
-    index: a dict to fill (key -> packed location), or None to only check.
-    A transaction's ops reach the index only after layout.decode_txn has
-    validated its whole marker — torn and corrupt ones never return ops.
+    buf: bytes or mmap (slicing must give bytes). index: a dict to fill
+    (key -> packed location), or None to only check. A transaction's ops reach
+    the index only after its whole marker has been validated.
     on_first: called once after the first transaction is applied (pause point).
     """
     size = len(buf)
-    p = layout.HEADER_SIZE
+    view = memoryview(buf)
+    p = start
     count = 0
-    put = layout.OP_PUT
+    head_and_op = _HEAD_AND_OP.unpack_from
+    op_header = layout.OP_HEADER.unpack_from
+    mark_and_trailer = _MARK_AND_TRAILER.unpack_from
+    crc32 = zlib.crc32
     bits = layout.LOCATION_BITS
-    decode = layout.decode_txn
-    while p < size:
-        d = decode(buf, p)
-        if d.status == layout.OK or d.status == layout.NO_TRAILER:
-            if index is not None:
-                for op, key, value_offset, value_length in d.ops:   # list order: last op wins
-                    if op == put:
-                        index[key] = (value_offset << bits) | value_length
-                    else:
-                        index.pop(key, None)
-            count += 1
-            if count == 1 and on_first is not None:
-                on_first()
-            if d.status == layout.NO_TRAILER:
-                return Scan(NO_TRAILER, d.offset, d.reason, count)   # only possible at the very end
-            p = d.offset
-        elif d.status == layout.INCOMPLETE:
-            return Scan(TORN, p, d.reason, count)
-        else:
-            return Scan(CORRUPT, d.offset, d.reason, count)
-    return Scan(CLEAN, p, "", count)
-
-
-def _scan_fd(fd, size, index, on_first=None):
-    """Scan an open file of `size` bytes through a read-only mmap."""
-    if size == layout.HEADER_SIZE:
-        return Scan(CLEAN, size, "", 0)
-    mm = mmap.mmap(fd, size, access=mmap.ACCESS_READ)
-    view = memoryview(mm)
+    max_key, max_value, max_ops = layout.MAX_KEY, layout.MAX_VALUE, layout.MAX_OPS
+    put, delete = layout.OP_PUT, layout.OP_DELETE
     try:
-        return scan(view, index, on_first)
+        while p < size:
+            # -- fast path: a complete, valid transaction ---------------------------
+            if p + 10 <= size:
+                txn_type, n_ops, op, key_len, val_len = head_and_op(buf, p)
+                if (txn_type == 0xA1 and 1 <= n_ops <= max_ops and 1 <= key_len <= max_key
+                        and (op == put and val_len <= max_value or op == delete and val_len == 0)):
+                    key_at = p + 10
+                    end = key_at + key_len + val_len
+                    staged = None
+                    if end <= size:
+                        if n_ops == 1:
+                            staged = ((op, buf[key_at:key_at + key_len], key_at + key_len, val_len),)
+                        else:
+                            staged = [(op, buf[key_at:key_at + key_len], key_at + key_len, val_len)]
+                            for _ in range(n_ops - 1):
+                                if end + 7 > size:
+                                    staged = None
+                                    break
+                                op, key_len, val_len = op_header(buf, end)
+                                if not (1 <= key_len <= max_key
+                                        and (op == put and val_len <= max_value or op == delete and val_len == 0)):
+                                    staged = None
+                                    break
+                                key_at = end + 7
+                                end = key_at + key_len + val_len
+                                if end > size:
+                                    staged = None
+                                    break
+                                staged.append((op, buf[key_at:key_at + key_len], key_at + key_len, val_len))
+                    if staged is not None and end + 17 <= size:
+                        magic, body_len, crc, trailer = mark_and_trailer(buf, end)
+                        if (magic == b"CMIT" and body_len == end - p and trailer == 0xEE
+                                and crc == crc32(view[p:end])):
+                            if index is not None:
+                                for op, key, value_offset, value_length in staged:   # list order: last op wins
+                                    if op == put:
+                                        index[key] = (value_offset << bits) | value_length
+                                    else:
+                                        index.pop(key, None)
+                            count += 1
+                            if count == 1 and on_first is not None:
+                                on_first()
+                            p = end + 17
+                            continue
+            # -- anything else: the exact rules of layout.decode_txn ----------------
+            d = layout.decode_txn(view, p)
+            if d.status == layout.OK or d.status == layout.NO_TRAILER:
+                if index is not None:
+                    for op, key, value_offset, value_length in d.ops:
+                        if op == put:
+                            index[key] = (value_offset << bits) | value_length
+                        else:
+                            index.pop(key, None)
+                count += 1
+                if count == 1 and on_first is not None:
+                    on_first()
+                if d.status == layout.NO_TRAILER:
+                    return Scan(NO_TRAILER, d.offset, d.reason, count)   # only possible at the very end
+                p = d.offset
+            elif d.status == layout.INCOMPLETE:
+                return Scan(TORN, p, d.reason, count)
+            else:
+                return Scan(CORRUPT, d.offset, d.reason, count)
+        return Scan(CLEAN, p, "", count)
     finally:
         view.release()
+
+
+def _scan_fd(fd, size, index, on_first=None, start=layout.HEADER_SIZE):
+    """Scan an open file of `size` bytes through a read-only mmap, from offset start."""
+    if start >= size:
+        return Scan(CLEAN, size, "", 0)
+    mm = mmap.mmap(fd, size, access=mmap.ACCESS_READ)
+    try:
+        return scan(mm, index, on_first, start)   # slicing an mmap gives bytes: keys are bytes
+    finally:
         mm.close()
 
 
@@ -153,7 +217,7 @@ def recover(path, max_bytes=0):
     except FileNotFoundError:
         _create(path, max_bytes)                                            # step 1
         return Recovered({}, layout.HEADER_SIZE, max_bytes,
-                         Report(0, time.perf_counter() - started, 0, False, True))
+                         Report(0, time.perf_counter() - started, 0, False, True, False), 0)
     try:
         size = os.fstat(fd).st_size
 
@@ -163,7 +227,7 @@ def recover(path, max_bytes=0):
             _write_at(fd, 0, layout.encode_header(max_bytes))
             os.fsync(fd)
             return Recovered({}, layout.HEADER_SIZE, max_bytes,
-                             Report(0, time.perf_counter() - started, 0, False, True))
+                             Report(0, time.perf_counter() - started, 0, False, True, False), 0)
 
         header = layout.decode_header(_read_all(fd, 0, layout.HEADER_SIZE))  # step 3
         if header.status != layout.OK:
@@ -172,8 +236,13 @@ def recover(path, max_bytes=0):
             raise InvalidInput("the size cap is fixed at creation: this file has max_bytes={}".format(
                 header.max_bytes))
 
-        index = {}
-        result = _scan_fd(fd, size, index, on_first=lambda: pause("recovery.replay"))  # step 4
+        snapshot.remove_leftover(path)                                     # a killed snapshot write
+        loaded = snapshot.load(path, size, lambda offset, n: _read_all(fd, offset, n))
+        if loaded.index is not None:                                       # step 4a: start from the snapshot
+            index, start = loaded.index, loaded.covered_end
+        else:                                                              # no usable snapshot: whole log
+            index, start = {}, layout.HEADER_SIZE
+        result = _scan_fd(fd, size, index, on_first=lambda: pause("recovery.replay"), start=start)  # step 4
 
         if result.kind == CORRUPT:                                          # step 5
             raise CorruptFile(result.offset, result.reason)
@@ -192,7 +261,8 @@ def recover(path, max_bytes=0):
             end, restored = size + 1, True
 
         return Recovered(index, end, header.max_bytes,                      # step 8
-                         Report(len(index), time.perf_counter() - started, bytes_cut, restored, False))
+                         Report(len(index), time.perf_counter() - started, bytes_cut, restored, False,
+                                loaded.index is not None), result.transactions)
     finally:
         os.close(fd)
 
