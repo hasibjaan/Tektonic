@@ -114,7 +114,7 @@ rehearsal/              crash-here questions and answers (not committed)
 - Invalid input is rejected **before any byte is written**.
 - A batch applies in list order. The last operation on a key wins.
 - put, delete and batch all go through **one** transaction write path.
-- Errors are raised as a small set of named exception classes (invalid input, size cap reached, not our file, corrupt file, database failed). README lists them. "Corrupt file" was added in Phase 1: open refuses a file with a bad byte that a kill cannot produce (section 10).
+- Errors are raised as a small set of named exception classes (invalid input, size cap reached, not our file, corrupt file, database busy, database failed). README lists them. "Corrupt file" was added in Phase 1: open refuses a file with a bad byte that a kill cannot produce (section 10).
 - The size cap is fixed when the file is created. Opening an existing file with a different non-zero `--max-bytes` is rejected as invalid input; the file is not changed.
 
 ## 8. On-disk format — FROZEN IN PHASE 1
@@ -163,7 +163,7 @@ A sidecar file next to the database. It is **only a cache**: the main file's for
 | 49 + 10n | key_bytes | all keys back to back |
 | end − 4 | 4 | crc32 u32 of every byte before it |
 
-- **Written** by `src/kv/db.py` `DB._snapshot`, under the lock, after step 7 of a commit, when the transactions since the last snapshot reach max(10,000, number of keys // 4). Order: write `<path>.idx.tmp`, flush, fsync, close → `os.replace` onto `<path>.idx` → fsync the folder. A snapshot failure never fails the write.
+- **Written** by `src/kv/db.py` `DB._snapshot`, under the lock, after step 7 of a commit, when the transactions since the last snapshot reach max(10,000, number of keys // 8) (`SNAPSHOT_DIVISOR = 8`; it was 4 until the Phase 6 re-measure, team decision). Order: write `<path>.idx.tmp`, flush, fsync, close → `os.replace` onto `<path>.idx` → fsync the folder. A snapshot failure never fails the write.
 - **Used** only if: the CRC matches, magic/version/flags are right, the sizes add up, `16 + 17 <= E_c <= file size`, the 17 log bytes ending at E_c equal `log_tail`, no location points past E_c, and there are no duplicate keys.
 - **Compaction (Phase 7)** must remove `<path>.idx` before its swap.
 - The snapshot does **not** count against `max_bytes` (like the compaction temporary file).
@@ -258,7 +258,35 @@ Exit codes for check are decided in Phase 4.
 
 ## 11. Compaction order — FROZEN IN PHASE 7
 
-`[Phase 7 writes it here before any compaction code.]`
+Approved by the team in Phase 7 (2026-11-06). `src/kv/db.py` `DB.compact` holds the global lock for the whole run.
+
+```
+ 1. delete a leftover <path>.compact.tmp (never trusted)
+ 2. write <path>.compact.tmp in the SAME folder: 16-byte header with the SAME max_bytes,
+    then every live key as ordinary put transactions in batches (at most 10,000 ops and
+    64 MiB of values each), values read through the read handle in file order
+                                                              [compact.mid-write] after the first batch
+ 3. flush, fsync, close the temporary file
+ 4. validate: a full read-only scan of it must end CLEAN with exactly the live keys,
+    the same value lengths and the expected size — else delete it and raise
+    CompactionFailed; the original is untouched
+ 5. delete <path>.idx (its offsets point into the old file)
+ 6. close BOTH live handles
+                                                              [compact.before-swap]
+ 7. os.replace(<path>.compact.tmp, <path>)                    ← the only switch
+                                                              [compact.after-swap]
+ 8. fsync the folder
+ 9. reopen both handles; index = the one from step 4; end = new size (checked with fstat)
+                                                              [compact.before-cleanup]
+10. cleanup: write a fresh snapshot of the new index; release the lock
+failure in 2–4: delete the temporary file, raise CompactionFailed, database still usable
+failure in 6–9: mark the database failed (writes refused until reopen); the disk holds one
+                complete database, old or new
+```
+
+- **At open** (`src/kv/recovery.py` `recover`): a leftover `<path>.compact.tmp` is deleted, never used.
+- **E5:** when a write does not fit under `max_bytes`, compute the exact size of a compacted file WITH that write applied (from the index alone). If it fits, compact with the write included — step 7 is then that write's commit point — and return success. If not, raise `SizeCapReached`; nothing is written.
+- A compacted file larger than `max_bytes` is a compaction failure (E4); the temporary file itself is not counted against the cap.
 
 ## 12. File handles and locks
 
@@ -267,6 +295,7 @@ Exit codes for check are decided in Phase 4.
 - **Chosen in Phase 1: ONE global lock.** `lock` (`threading.Lock`) is held by put, delete and batch from validation until the index is updated, by get across the dict lookup **and** the read from the read handle, and by compact and close for their whole run. Nothing overlaps.
 - Result: a reader sees the state before a batch or after it, never in between (D4), because get cannot run while a batch holds the lock. The cost, accepted by the team: a get waits behind any write and its two fsyncs.
 - Python's GIL does **not** make a multi-step write safe. The lock does.
+- **Database lock (Phase 6, team decision):** `src/kv/db.py` `open_db` takes an exclusive, non-blocking `fcntl.flock` on `<path>.lock` BEFORE recovery and holds it until `close`. A second open — another process or the same one — gets `DatabaseBusy` and changes nothing. The kernel drops the lock when the process dies, so a hard kill never leaves it locked. A separate lock file (not the data file) because the data file may not exist yet and Phase 7 compaction replaces it with `os.replace`. `check` takes no lock (it only reads). Windows has no `fcntl`: no lock there (platform limit, NOT TESTED).
 - Not chosen: the two-lock design (`write_lock` plus `index_lock`), where readers never wait for a sync. If we switch to it, this section changes first.
 
 ## 13. Pause points (targeted crash tests)
@@ -291,6 +320,7 @@ Changing anything here means telling both owners and updating README.md. Every c
 | `dump <path> [--hex]` | one `<key> <value>` per line, sorted by raw key bytes |
 | `check <path>` | `OK` or a reason. **Never modifies the file.** |
 | `serve <path>` | see below |
+| `compact <path>` (Phase 7) | `OK bytes_before=<n> bytes_after=<n>` |
 
 **Keys and values in arguments, batch files and serve lines:**
 
@@ -307,6 +337,7 @@ Printed values use plain text only when that is unambiguous, otherwise `hex:`. `
 <id> del <key>
 <id> get <key>
 <id> batch <n>        then exactly n lines:  put <key> <value>  |  del <key>
+<id> compact          (Phase 7) ACK <id> when compaction has finished
 ```
 
 and writes one line per result to stdout:
@@ -320,7 +351,7 @@ ERR <id> <reason>     nothing was changed
 
 - stderr carries `PID <n>` at start, `PAUSE <name>` at pause points, and diagnostics — always flushed.
 - `<id>` is any token without spaces, unique per request. The tester uses `w<writer>-<sequence>`.
-- Added in Phase 4 (both owners: read README "serve protocol" and "Commands"): stderr also carries `READY keys=<n> recovery_ms=<n> bytes_cut=<n> trailer_restored=<yes|no>` once recovery is done. Phase 6 appends ` snapshot=<yes|no>` to the READY line (whether the index came from `<path>.idx`). The `open` command's output line does not change. Requests in flight run concurrently, so replies can come back in any order. `dump --hex` prints `hex:<key> hex:<value>` per line. Exit codes: 0 success (also NOTFOUND and check OK), 1 check found a problem, 2 usage error, 3 `ERR`.
+- Added in Phase 4 (both owners: read README "serve protocol" and "Commands"): stderr also carries `READY keys=<n> recovery_ms=<n> bytes_cut=<n> trailer_restored=<yes|no>` once recovery is done. Phase 7: serve prints `COMPACT begin` and `COMPACT end` on stderr around every compaction (asked for, or started by E5). Phase 6 appends ` snapshot=<yes|no>` to the READY line (whether the index came from `<path>.idx`). The `open` command's output line does not change. Requests in flight run concurrently, so replies can come back in any order. `dump --hex` prints `hex:<key> hex:<value>` per line. Exit codes: 0 success (also NOTFOUND and check OK), 1 check found a problem, 2 usage error, 3 `ERR`.
 - One thread reads complete requests. A `concurrent.futures.ThreadPoolExecutor` with at least two workers calls the engine concurrently. Writes to stdout happen under a lock and are **flushed after every line** — when stdout is a pipe, Python otherwise holds the ACKs back and the tester never sees them.
 
 ## 15. Python traps — check every change against this list

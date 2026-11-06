@@ -32,12 +32,15 @@ Python 3.10 or newer (the import checker uses `sys.stdlib_module_names`). Standa
 | `./kvdb dump <path> [--hex]` | one `<key> <value>` per line, sorted by raw key bytes; `--hex` prints both as `hex:` | 0 |
 | `./kvdb check <path>` | `OK`, or one reason (see "Recovery algorithm"); **never changes the file** | 0 if `OK`, 1 otherwise |
 | `./kvdb serve <path>` | see "serve protocol" | 0 when stdin closes |
+| `./kvdb compact <path>` (Phase 7) | `OK bytes_before=<n> bytes_after=<n>` — rewrites the file with only the live keys | 0 |
 | any command that the engine refuses, or a file that is not ours / corrupt | `ERR <ErrorClass>: <reason>` on stdout | 3 |
 | wrong arguments | usage on stderr | 2 |
 
 - **Keys and values:** plain text (no spaces, not starting with `hex:` or `file:`), `hex:<digits>` for any bytes (the empty value is `hex:`), or `file:<path>` (needed for a 1 MB value: it cannot fit on a command line). A value that starts with `-` must come after `--`, e.g. `./kvdb put db.kv -- k -5`, or be written as `hex:`.
 - **Printed values** use plain text only when it is unambiguous: visible ASCII, no space, not starting with `hex:`/`file:`, and not the word `NOTFOUND`. Anything else is printed as `hex:`.
 - Every command except `check` runs recovery first, so `get`, `dump` and the others may repair a torn tail, exactly like `open`.
+- **One open at a time.** Every command except `check` first takes an exclusive lock on `<path>.lock` (`fcntl.flock`, macOS and Linux). While `serve` runs, `./kvdb get demo.kv k` prints `ERR DatabaseBusy: …` and exits 3 instead of running recovery under serve's feet (`tests/test_lock.py`). A hard kill releases the lock. `check` takes no lock: it never writes, but if it runs while serve is mid-write it may report that write's bytes as a torn tail.
+- **Files next to a database `<path>`:** `<path>.lock` (the lock, empty), `<path>.idx` (index snapshot, a cache) and, only while one is being written, `<path>.idx.tmp` (snapshot) or `<path>.compact.tmp` (compaction). Open deletes both temporary files; it never uses them.
 
 <!-- commands:begin -->
 ```console
@@ -87,7 +90,7 @@ $ ./kvdb check demo.kv; echo "exit=$?"
 MISSING_TRAILER at 275
 exit=1
 $ ./kvdb open demo.kv
-keys=6 recovery_ms=22 bytes_cut=0 trailer_restored=yes
+keys=6 recovery_ms=1 bytes_cut=0 trailer_restored=yes
 $ ./kvdb check demo.kv
 OK
 $ ./kvdb open small.kv --max-bytes 100
@@ -97,8 +100,13 @@ OK
 $ ./kvdb put small.kv k2 0123456789
 OK
 $ ./kvdb put small.kv k3 0123456789; echo "exit=$?"
-ERR SizeCapReached: transaction needs 39 bytes; file is 94 of max_bytes 100
+OK
+exit=0
+$ ./kvdb put small.kv k4 0123456789012345678901234567890123456789; echo "exit=$?"
+ERR SizeCapReached: transaction needs 69 bytes; file is 93 of max_bytes 100; even compacted with it the file would be 142 bytes
 exit=3
+$ ls -l small.kv | awk '{print $5}'
+93
 $ printf 'not a database' > foreign.kv
 $ ./kvdb get foreign.kv k; echo "exit=$?"
 ERR NotOurFile: file has 14 bytes and is not the start of a KVDB header
@@ -119,6 +127,7 @@ Requests:
 <id> del <key>
 <id> get <key>
 <id> batch <n>        then exactly n lines:  put <key> <value>  |  del <key>
+<id> compact          (Phase 7) rewrite the file with only the live keys
 ```
 
 Replies:
@@ -137,6 +146,7 @@ ERR <id> <reason>     nothing was changed
 - stderr: `PID <n>` first (before recovery), then `READY keys=<n> recovery_ms=<n> bytes_cut=<n> trailer_restored=<yes|no>` once recovery has finished and requests are accepted.
 - **Requests in flight run concurrently** (4 worker threads). Two requests sent without waiting can finish in either order, and their replies can come back in either order. A client that needs A before B must wait for A's ACK before sending B.
 - A batch is read completely (its header line plus n lines) before anything is decided. If any of its lines is malformed, the whole batch gets `ERR` and nothing is written. If the count itself is not a number from 1 to 10,000, the request gets `ERR` and the following lines are read as requests of their own.
+- `compact` is answered `ACK <id>` only after the swap and cleanup (CLAUDE.md section 11). Around every compaction — asked for, or started by a write that did not fit under `--max-bytes` (E5) — stderr carries `COMPACT begin` and `COMPACT end`.
 - When stdin closes, serve finishes the requests it has, closes the database and exits with code 0.
 - `ERR` means the engine raised and the transaction was rolled back, so it is absent. One rare exception: if the second fsync fails **and** the rollback then fails too, the reply is `ERR … DatabaseFailed` and the transaction may still be present after a reopen — allowed by invariant rule 2, because success was never returned.
 
@@ -154,7 +164,7 @@ ERR <id> <reason>     nothing was changed
 |---|---|
 | `--seed N` | **required**; every random choice comes from one `random.Random(N)` |
 | `--iterations N` | kills to run (default 500); in `targeted` mode, rounds over all pause points |
-| `--mode` | `default`, `large-values` (values up to 1,048,576 bytes), `large-batches` (1,000–10,000 ops), `targeted`. `recovery-crash`, `compaction` and `disk-full` exist as names but refuse to run (exit 2) until Phase 7 |
+| `--mode` | `default`; `large-values` (values up to 1,048,576 bytes); `large-batches` (1,000–10,000 ops); `compaction` (12 % of requests are `compact`, 800 keys per writer, counts kills that land DURING a compaction); `recovery-crash` (100,000 prefilled keys; after each kill, serve is restarted and killed again 3 times 60–220 ms after it starts, each kill classified as before start-up / during recovery / after READY); `disk-full` (`--max-bytes 4096`: the only ERR allowed is `SizeCapReached`, and the file must stay under the cap); `overlap` (all writers share 8 keys, single puts and deletes; see below); `targeted` (every pause point); `scale` (Phase 6) |
 | `--writers N` | concurrent writer threads, at least 2 (default 3) |
 | `--kvdb PATH` | the engine's command line (default `kvdb.py`) |
 | `--workdir PATH` | work folder on the real disk (default `.torture-work/`); `/tmp` is refused |
@@ -165,6 +175,10 @@ ERR <id> <reason>     nothing was changed
 **The oracle** (`tester/oracle.py`) owns a log (`oracle.log` in the work folder) where every request is written **before** it is sent and every reply when it arrives, flushed line by line. Each writer has its own keys and at most one request in flight, so after a kill each writer's keys must equal either "everything ACKed" or "everything ACKed plus its one unanswered request, as a whole" (a batch is one request). `ERR` means the request must be absent. Any key nobody wrote is a failure. Every value names its writer, sequence, op and iteration plus a random tail, so a torn or mixed value matches nothing. After a pass the oracle only records which of its own two states matched; it never copies a value from the dump.
 
 **Output:** one line per iteration (`iter`, `seed`, `kill_ms`, `in_flight`, `acks`, `keys`, PASS/FAIL, seconds), then `PASS n/n`, the share of kills with a request in flight, and the projected time for 200 iterations. On the first failure it prints the operation ids and expected versus found, saves the database (after the kill and after open), `oracle.log` and `trace.log` to `evidence/failures/seed-<s>-iter-<i>/`, and exits 1.
+
+**Strict replies (Phase 7):** any `ERR` that the mode does not allow — in every mode except `disk-full`, any `ERR` at all — fails the iteration.
+
+**The overlap oracle** (`tester/oracle.py` `OverlapOracle`): every writer uses the same 8 keys, one put or delete per request, at most one request in flight per writer. The tester's own clock ticks when it sends a request and when a reply arrives. For each key the final value must come from a request that no later ACKed request could have replaced ("later" = sent after the first one's ACK arrived), or from an unanswered one (which may have run at any time after it was sent), or be the value from before the iteration if nothing on that key was ACKed. Values are unique per request, so a match names the request. Key by key is enough because each request touches one key; batches are not used in this mode (batch atomicity is checked by the other modes).
 
 **What a seed reproduces:** the workload (every key, value and batch) and every kill delay. It cannot reproduce thread timing, so the exact request that is in flight at the kill can differ between two runs with the same seed.
 
@@ -178,7 +192,15 @@ ERR <id> <reason>     nothing was changed
 | planted: every put also writes an invented key | FAIL at iteration 1, `invented-w1k0 … was never written` | `proof-planted-bugs.txt` |
 | the real engine, seed 60606 | PASS 50/50, request in flight at 50/50 kills, 50.4 s | `run-default-50-seed-60606.txt` |
 | the real engine (Phase 5 code), seed 777001 | PASS 200/200, request in flight at 200/200 kills, **355.8 s** (over the judge's ~3 minutes) | `run-default-200-seed-777001.txt` |
-| the real engine after Phase 6 (snapshot), seed 909090 | PASS 200/200, request in flight at 200/200 kills, **177.0 s** | `run-default-200-seed-909090.txt` |
+| the real engine with the snapshot every keys ÷ 4, seed 909090 | PASS 200/200, request in flight at 200/200 kills, 177.0 s | `run-default-200-seed-909090.txt` |
+| the real engine, final Phase 6 code (keys ÷ 8 + lock), seed 313131 | PASS 200/200, request in flight at 200/200 kills, 160.1 s | `run-default-200-seed-313131.txt` |
+| **Phase 7 code**, `default`, seed 1717 | PASS 200/200, **152.2 s** | `run-default-200-seed-1717.txt` |
+| Phase 7, `compaction`, seed 7701 | PASS 100/100; **80 of 100 kills landed during a compaction**; 81.4 s | `run-compaction-100-seed-7701.txt` |
+| Phase 7, `recovery-crash`, seed 4201 | PASS 100/100; 300 extra kills of a restarted serve: **216 during recovery**, 20 before start-up, 64 after READY; 215.6 s | `run-recovery-crash-100-seed-4201.txt` |
+| Phase 7, `disk-full`, seed 9901 | PASS 100/100; **449 clean `SizeCapReached` refusals**, file never over 4,096 bytes; 60.7 s | `run-disk-full-100-seed-9901.txt` |
+| Phase 7, `overlap`, seed 5501 | PASS 100/100 (3 writers, 8 shared keys); 70.7 s | `run-overlap-100-seed-5501.txt` |
+| Phase 7, `large-values` / `large-batches`, seeds 9902 / 4202 | PASS 20/20 each | `run-large-values-20-seed-9902.txt`, `run-large-batches-20-seed-4202.txt` |
+| Phase 7, `targeted`, seed 3131 (TARGETED) | PASS 51/51 = 17 pause points × 3 rounds, now including the 4 `compact.*` points; `snapshot.*` are hard-killed in `tests/test_snapshot.py` instead | `run-targeted-3-seed-3131.txt` |
 | the real engine after Phase 6, `--mode targeted`, seed 626262 (TARGETED) | PASS 26/26; `compact.*` and `snapshot.*` NOT TESTED here (snapshot kills are in `tests/test_snapshot.py`) | `run-targeted-2-seed-626262.txt` |
 | the real engine, `--mode large-values`, seed 999111 | PASS 10/10 | `run-large-values-10-seed-999111.txt` |
 | the real engine, `--mode large-batches`, seed 424299 | PASS 10/10; 23 batches of 1,000–10,000 ops in flight at a kill, none partly present | `run-large-batches-10-seed-424299.txt`, `in-flight-analysis.txt` |
@@ -280,7 +302,7 @@ one transaction:
 | 49 + 10n | … | all keys back to back |
 | end − 4 | 4 | crc32 of everything before it |
 
-It is written after a commit, under the lock, once the transactions since the last snapshot reach max(10,000, keys ÷ 4): to `<path>.idx.tmp`, fsync, then `os.replace` onto `<path>.idx`, then fsync of the folder. A failed snapshot never fails the write. It does not count against `--max-bytes`.
+It is written after a commit, under the lock, once the transactions since the last snapshot reach max(10,000, keys ÷ 8): to `<path>.idx.tmp`, fsync, then `os.replace` onto `<path>.idx`, then fsync of the folder. A failed snapshot never fails the write. It does not count against `--max-bytes`.
 
 ## Recovery algorithm
 
@@ -298,6 +320,25 @@ A kill only ever cuts the end of the file — it never writes wrong bytes. So op
 8. Open reports the key count, the time taken, the bytes cut and whether the trailer was restored.
 
 `check` does steps 1–7 without writing anything, and prints `OK`, `TORN_TAIL at <offset>, <n> bytes`, `MISSING_TRAILER at <offset>`, `CORRUPT at <offset>: <what>`, `NOT_OUR_FILE: <why>`, `INTERRUPTED_CREATE (<n> bytes)` or `NO_FILE`.
+
+## Compaction
+
+> Status: implemented in `src/kv/db.py` `DB.compact` and `_compact_locked` (Phase 7), the order frozen in CLAUDE.md section 11. Tested by `tests/test_compact.py`, including a hard kill at each of its four pause points.
+
+The log only grows, so `compact` rewrites it with only the live keys, under the database lock (reads and writes wait):
+
+1. Delete a leftover `<path>.compact.tmp`.
+2. Write `<path>.compact.tmp` in the same folder: a header with the same `max_bytes`, then every live key as ordinary put transactions in batches (at most 10,000 operations and 64 MiB of values each).
+3. `fsync` it and close it.
+4. Read it back with the normal recovery scan: it must be clean, with exactly the live keys and their lengths. Otherwise delete it and raise `CompactionFailed` — nothing changed.
+5. Delete the old snapshot `<path>.idx`.
+6. Close both handles.
+7. `os.replace(<path>.compact.tmp, <path>)` — the one atomic switch. The original is never deleted first.
+8. `fsync` the folder.
+9. Reopen both handles; the index now points into the new file.
+10. Write a fresh snapshot.
+
+A kill before step 7 leaves the original complete (open deletes the temporary file); a kill after it leaves the complete new file. **E5:** when a write does not fit under `--max-bytes`, the engine first checks whether the file compacted *with that write* would fit; if so it compacts with it (step 7 is then the write's commit point), otherwise it refuses with `SizeCapReached` and writes nothing.
 
 ## Limits
 
@@ -319,10 +360,12 @@ A kill only ever cuts the end of the file — it never writes wrong bytes. So op
 | Error | Raised when | File changed? |
 |---|---|---|
 | `InvalidInput` | key, value or batch outside the limits; a `str` instead of `bytes`; a different `--max-bytes` on an existing file | no |
-| `SizeCapReached` | the whole transaction would push the file past `max_bytes` | no |
+| `SizeCapReached` | the whole transaction does not fit under `max_bytes` — **even after compacting the file with it** (E5, Phase 7) | no |
 | `NotOurFile` | wrong magic, version or flags, or a short file that is not the start of our header | no |
 | `CorruptFile` | a bad byte that a kill cannot produce (section "Recovery algorithm", step 7) | no |
 | `OSError` (from the OS) | a write or fsync failed and the rollback succeeded: the file is back at the end offset E | no |
+| `CompactionFailed` | compaction stopped before its swap: a write error such as a full disk, the new file failed its check, or the result would exceed `max_bytes` | no — the temporary file is deleted, the database stays usable |
+| `DatabaseBusy` | another open (another process, or the same process) already has the database: it holds `<path>.lock` | no |
 | `DatabaseFailed` | a write failed **and** the rollback truncate or its fsync also failed; every later write is refused until reopen. Also raised for any operation on a closed database | may end in a torn tail (never a complete marker for the failed write — see below), which the next open cuts |
 
 Why a failed write can never leave a complete marker that recovery would trust: the marker is written only after the body's fsync succeeded (CLAUDE.md section 9, steps 4–5). If the failure was in the marker write itself, the marker is incomplete and the tail is torn. If only the second fsync failed, the marker may be complete; then the rollback truncate removes it, and if that truncate also fails, the database is marked failed and the transaction **may survive** a later reopen even though the caller got an error. That is allowed by rule 2 of the invariant (an operation that did not return success may be fully present).
@@ -339,9 +382,11 @@ To be written from evidence.
 |---|---|---|
 | Phase 3 code | 4.857 s | 4.814 s |
 | Phase 6 fast path, no snapshot | 2.889 s | 2.354 s |
-| Phase 6 fast path + index snapshot (current) | **1.070 s** | 0.987 s |
-| current, worst case (last snapshot 250,000 transactions old) | **1.582 s** | — |
+| fast path + snapshot every keys ÷ 4 | 1.070 s (worst case 1.582 s) | 0.987 s |
+| **current: fast path + snapshot every keys ÷ 8** | **1.253 s** (worst case **1.127 s**, snapshot 125,000 transactions old) | 1.073 s |
 
-**The 2-second limit (F3, B6) is met on this laptop**, with the worst case at 1.582 s — less margin than we would like (see BREAKING.md). A durable single put takes 0.389 ms on average (`tools/sync_speed.py`).
+**The 2-second limit (F3, B6) is met on this laptop**, every run under 1.3 s (`evidence/recovery-benchmark-keys8.txt`). A durable single put takes 0.389 ms on average (`tools/sync_speed.py`).
 
-**Torture run time:** 200 iterations of `./torture` took **177.0 s** after Phase 6 (seed 909090, `evidence/torture/run-default-200-seed-909090.txt`), just inside the judge's ~3 minutes; before Phase 6 they took 355.8 s (`run-default-200-seed-777001.txt`), because every iteration replayed the whole growing log four times. Now each open starts from a snapshot at most 10,000 transactions old (0.87 s for iteration 1, 1.17 s for iteration 200). The kills were not changed..
+**Shrink test** (`evidence/shrink-test.txt`, `python3 tools/shrink_test.py`; written in batches of 10,000 operations through the engine API, not single puts): after 1,000,000 puts the file was 27,002,016 bytes; after 1,000,000 deletes 44,004,016 bytes and 0 keys; after `compact` **16 bytes** (just the header). `check` said OK, the reopened database was empty, and a new put worked.
+
+**Torture run time:** 200 iterations of `./torture` took **152.2 s** with the Phase 7 code (seed 1717, `evidence/torture/run-default-200-seed-1717.txt`), inside the judge's ~3 minutes; 160.1 s and 177.0 s with the Phase 6 code, and 355.8 s before Phase 6 (`run-default-200-seed-777001.txt`), when every iteration replayed the whole growing log four times. The kills were not changed. `--mode recovery-crash` is slower on purpose: 100 iterations took 215.6 s (100,000 prefilled keys, three extra kills per iteration)..
