@@ -75,6 +75,8 @@ $ ./kvdb dump demo.kv --hex
 hex:616c69 hex:3330
 hex:656d707479 hex:
 hex:747269636b79 hex:4e4f54464f554e44
+$ ./kvdb compact demo.kv
+OK bytes_before=204 bytes_after=81
 $ ./kvdb check demo.kv
 OK
 $ ./kvdb put demo.kv "a b" 1; echo "exit=$?"
@@ -87,7 +89,7 @@ $ printf 'g1 get hasib\n' | ./kvdb serve demo.kv 2>/dev/null
 VAL g1 21
 $ python3 -c "import os; os.truncate('demo.kv', os.path.getsize('demo.kv') - 1)"
 $ ./kvdb check demo.kv; echo "exit=$?"
-MISSING_TRAILER at 275
+MISSING_TRAILER at 152
 exit=1
 $ ./kvdb open demo.kv
 keys=6 recovery_ms=1 bytes_cut=0 trailer_restored=yes
@@ -313,7 +315,7 @@ A kill only ever cuts the end of the file — it never writes wrong bytes. So op
 1. If the file is missing, open creates it: it writes the header and syncs the file and the directory.
 2. If the file is shorter than the 16-byte header and its bytes match the start of a valid header, creation was interrupted, so open writes a fresh header. If they don't match, open refuses: it is not our file.
 3. If the magic is not `KVDB`, or the version is not 1, or the flags are not 0, open refuses and leaves the file exactly as it is.
-4. If `<path>.idx` is valid for this log (correct CRC, and the 17 log bytes at its covered offset E_c are the ones it stored), the index starts as that snapshot and open reads transactions from E_c; otherwise it starts empty and reads from byte 16. (A leftover `<path>.idx.tmp` from a killed snapshot write is deleted.) Open reads transactions from there. For each one it checks every length against the limits and against the bytes left in the file. It collects the operations on the side. Only when the commit marker is complete and its body length and checksum match does it apply them to the index, in order. A batch is therefore all or nothing.
+4. If `<path>.idx` is valid for this log (correct CRC, and the 17 log bytes at its covered offset E_c are the ones it stored), the index starts as that snapshot and open reads transactions from E_c; otherwise it starts empty and reads from byte 16. (A leftover `<path>.idx.tmp` or `<path>.compact.tmp` from a killed snapshot write or compaction is deleted, never used.) Open reads transactions from there. For each one it checks every length against the limits and against the bytes left in the file. It collects the operations on the side. Only when the commit marker is complete and its body length and checksum match does it apply them to the index, in order. A batch is therefore all or nothing.
 5. After each marker it expects the trailer byte `EE`. If the file ends exactly at the marker, the transaction is still valid — only the trailer was lost (for example by a 1-byte cut of the file). Open writes the trailer back and syncs before it accepts any new write.
 6. If the file ends in the middle of a transaction, open cuts the file back to the end of the last complete transaction — an absolute offset, so doing it twice gives the same result — and syncs.
 7. Any other bad byte is corruption. Open refuses and writes nothing, rather than throw away committed transactions that come after it.
@@ -366,13 +368,20 @@ A kill before step 7 leaves the original complete (open deletes the temporary fi
 | `OSError` (from the OS) | a write or fsync failed and the rollback succeeded: the file is back at the end offset E | no |
 | `CompactionFailed` | compaction stopped before its swap: a write error such as a full disk, the new file failed its check, or the result would exceed `max_bytes` | no — the temporary file is deleted, the database stays usable |
 | `DatabaseBusy` | another open (another process, or the same process) already has the database: it holds `<path>.lock` | no |
-| `DatabaseFailed` | a write failed **and** the rollback truncate or its fsync also failed; every later write is refused until reopen. Also raised for any operation on a closed database | may end in a torn tail (never a complete marker for the failed write — see below), which the next open cuts |
+| `DatabaseFailed` | a write failed **and** the rollback truncate or its fsync also failed; every later write is refused until reopen. Also raised for any operation on a closed database | the failed write may remain as a torn tail (the next open cuts it) or — only if the second fsync failed — as a complete transaction that the next open applies; see below |
 
-Why a failed write can never leave a complete marker that recovery would trust: the marker is written only after the body's fsync succeeded (CLAUDE.md section 9, steps 4–5). If the failure was in the marker write itself, the marker is incomplete and the tail is torn. If only the second fsync failed, the marker may be complete; then the rollback truncate removes it, and if that truncate also fails, the database is marked failed and the transaction **may survive** a later reopen even though the caller got an error. That is allowed by rule 2 of the invariant (an operation that did not return success may be fully present).
+**What a failed write leaves behind.** The marker is written only after the body's fsync succeeded (CLAUDE.md section 9, steps 4–5). If a write or the first fsync failed, there is no complete marker: the tail is torn, and the rollback (`truncate` to E, `fsync`) or the next open removes it. If only the second fsync failed, the marker is already complete: the rollback truncate removes it; if that truncate also fails (DatabaseFailed), or the process is killed before it runs, the transaction is complete on disk and the next open applies it even though the caller got an error. That is allowed by rule 2 of the invariant: an operation that did not return success may be fully present.
 
 ## Platform notes
 
-To be written from evidence.
+Measured on our demo laptop (CLAUDE.md section 5, `evidence/platform-probe.txt`, `evidence/fsync-macos.txt`):
+
+- macOS 15.8.1 (x86_64), Python 3.13.9 as `python3`; `python` and `py` do not exist there. Internal SSD, APFS.
+- Hard kill: `kill -9 <pid>` (exit status 137) and `Popen.kill()` (return code −9). Ctrl+C is not a crash test.
+- `fsync` of a directory after `os.replace` works; we do it after every compaction and snapshot swap.
+- `os.replace` onto a file that is still open works, but a handle opened before the swap keeps reading the OLD file — so compaction closes both handles before the swap and reopens them after.
+- `os.fsync` on macOS moves data to the drive but does not make the drive store it in order (`man 2 fsync`); `F_FULLFSYNC` would. We claim process death only.
+- The lock (`fcntl.flock`) and the directory fsync are macOS/Linux features. Windows has neither in our code: NOT TESTED there.
 
 ## Measured results
 
