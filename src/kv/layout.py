@@ -25,6 +25,8 @@ import collections
 import struct
 import zlib
 
+from .errors import InvalidInput, KVError  # noqa: F401  (KVError re-exported for callers)
+
 # ---- limits (CLAUDE.md section 7) -----------------------------------------
 MAX_KEY = 1024
 MAX_VALUE = 1_048_576          # 1 MB, decided in Phase 1
@@ -69,14 +71,6 @@ NOT_OURS = "not-ours"
 # reason: a short explanation, empty for OK.
 Decoded = collections.namedtuple("Decoded", "status ops offset reason")
 Header = collections.namedtuple("Header", "status max_bytes reason")
-
-
-class KVError(Exception):
-    """Base class of every error the engine raises on purpose."""
-
-
-class InvalidInput(KVError, ValueError):
-    """The request breaks a limit or a type rule. Nothing was written."""
 
 
 # ---- encoding -------------------------------------------------------------
@@ -133,7 +127,15 @@ def encode_body(ops):
     CRC is built up chunk by chunk, so a 10,000-operation batch of 1 MB values
     is never joined into one big buffer.
     """
-    clean, size = validate_ops(ops)
+    return encode_validated_body(validate_ops(ops)[0])
+
+
+def encode_validated_body(clean):
+    """encode_body for ops that already came out of validate_ops (no second check).
+
+    The engine's write path calls validate_ops once, keeps the clean ops to work
+    out each value's offset, and passes them here.
+    """
     head = TXN_HEADER.pack(TXN_TYPE, len(clean))
     chunks = [head]
     crc = zlib.crc32(head)
@@ -144,7 +146,7 @@ def encode_body(ops):
         if value:
             chunks.append(value)
             crc = zlib.crc32(value, crc)
-    body_len = size - MARKER.size - len(TRAILER_BYTES)
+    body_len = sum(len(c) for c in chunks)
     return chunks, body_len, crc
 
 
