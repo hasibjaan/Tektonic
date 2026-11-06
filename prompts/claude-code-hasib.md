@@ -39,3 +39,19 @@ Choose (a) Keep os.fsync and claim process death only, as CLAUDE.md §16 says. T
 After this commit.
 ~~~~~
 
+### 2026-11-06 15:14:05 · Claude Code · hasib
+~~~~~
+Start phase 2
+~~~~~
+
+### 2026-11-06 15:27:35 · Claude Code · hasib
+~~~~~
+How can I test or run the code
+~~~~~
+
+### 2026-11-06 15:32:41 · Claude Code · hasib
+~~~~~
+Commit phase 2.
+I have uploaded a new file called @CLAUDE_CODE_MASTER_PROMPT_PYTHON.md . Read your through that prompt file and continue from where you left off.
+~~~~~
+
