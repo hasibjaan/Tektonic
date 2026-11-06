@@ -7,3 +7,5 @@ __pycache__/
 rehearsal/
 # The team prompt pack: private, never in the public repo
 CLAUDE_CODE_MASTER_PROMPT_PYTHON.md
+# Database copies saved as evidence of a failure ARE committed
+!evidence/**/*.kv
