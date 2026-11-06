@@ -1,0 +1,12 @@
+# Command: python3 tools/platform_probe.py   (run 2026-11-06 12:36:50 IST)
+python: /usr/local/bin/python3 3.13.9
+platform: macOS-15.8.1-x86_64-i386-64bit-Mach-O
+work dir: /Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/.torture-work/platform-probe
+dir fsync after os.replace: OK
+content after swap: b'new'
+os.replace while 2 handles open: OK
+  old read handle still sees: b'old'
+  fresh handle sees: b'new'
+Popen.kill() -> returncode -9 (-9 means SIGKILL)
+# Command: python3 -c 'import time; time.sleep(60)' & PID=$!; kill -9 $PID; wait $PID
+kill -9 -> exit status 137 (137 = 128+9, SIGKILL)
