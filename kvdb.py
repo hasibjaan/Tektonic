@@ -8,6 +8,7 @@
     python3 kvdb.py dump  <path> [--hex]
     python3 kvdb.py check <path>               read-only
     python3 kvdb.py serve <path>               requests on stdin, results on stdout
+    python3 kvdb.py compact <path>             rewrite the file with only the live keys (Phase 7)
 
 Keys and values: plain text (no spaces, not starting with "hex:" or "file:"),
 "hex:<hex digits>" for any bytes (the empty value is "hex:"), or "file:<path>".
@@ -152,6 +153,13 @@ def cmd_dump(args):
     return EXIT_OK
 
 
+def cmd_compact(args):
+    with open_db(args.path)[0] as db:
+        before, after = db.compact()
+    print("OK bytes_before={} bytes_after={}".format(before, after))
+    return EXIT_OK
+
+
 def cmd_check(args):
     ok, reason = check(args.path)                      # read-only, never repairs
     print(reason)
@@ -185,6 +193,9 @@ class Server:
             elif kind == b"batch":
                 self.db.batch(payload)
                 self.reply(b"ACK", rid)
+            elif kind == b"compact":
+                self.db.compact()
+                self.reply(b"ACK", rid)                # only after the swap and cleanup
             elif kind == b"get":
                 value = self.db.get(payload)
                 if value is None:
@@ -223,6 +234,8 @@ class Server:
             return b"put", (parse_token(parts[2], "key"), parse_token(parts[3], "value"))
         if cmd in (b"del", b"get") and len(parts) == 3:
             return cmd, parse_token(parts[2], "key")
+        if cmd == b"compact" and len(parts) == 2:
+            return b"compact", None
         if cmd == b"batch" and len(parts) == 3:
             if not parts[2].isdigit() or not 1 <= int(parts[2]) <= layout.MAX_OPS:
                 # The count is unusable, so the following lines cannot be skipped safely:
@@ -248,6 +261,11 @@ def cmd_serve(args):
         r.keys, round(r.seconds * 1000), r.bytes_cut, "yes" if r.trailer_restored else "no",
         "yes" if r.snapshot else "no"))
     err.flush()
+    def on_compact(event):                             # explicit or started by E5
+        err.write("COMPACT {}\n".format(event))
+        err.flush()
+
+    db.compact_listener = on_compact
     try:
         Server(db, sys.stdout.buffer).serve(sys.stdin.buffer)
     finally:
@@ -279,6 +297,7 @@ def build_parser():
     d.add_argument("--hex", action="store_true", help="print both fields as hex:")
     add("check", cmd_check, help="verify the file without changing it")
     add("serve", cmd_serve, help="long-running mode: requests on stdin, ACK on stdout")
+    add("compact", cmd_compact, help="rewrite the file with only the live keys")
     return p
 
 
