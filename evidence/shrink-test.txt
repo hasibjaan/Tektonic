@@ -1,0 +1,14 @@
+# Shrink test (brief): 1,000,000 puts, 1,000,000 deletes, compaction
+# Command: python3 tools/shrink_test.py
+# Captured 2026-11-06 20:06:06 IST; load average: 2.07 2.56 2.85
+
+captured 2026-11-06 20:06:29 IST
+built with: batches of 10,000 operations through the engine API (not single puts)
+after 1,000,000 puts:      27,002,016 bytes, 1,000,000 keys
+after 1,000,000 deletes:   44,004,016 bytes, 0 keys
+after compaction:                  16 bytes, 0 keys  (compact() returned 44,004,016 -> 16)
+time: writes 23.6 s, compaction 0.01 s
+check after compaction: (True, 'OK')
+reopen: keys=0 snapshot=False
+a new put after reopen works: True ; keys now 1
+exit=0

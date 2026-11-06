@@ -1,0 +1,21 @@
+# Evidence: can the engine tests fail? Phase 6 final, run 2 (run 1 hung: kvdb.py was not copied and a test spun on EOF; both fixed).
+# Command: python3 tools/mutation_check_engine.py   (runs test_db, test_crash, test_snapshot, test_lock per mutant)
+# Captured 2026-11-06 19:30:56 IST
+
+CAUGHT   recovery cuts one byte too little: FAILED (errors=24)
+CAUGHT   recovery does not restore the trailer: FAILED (errors=4)
+CAUGHT   recovery truncates instead of refusing corruption: FAILED (failures=2)
+CAUGHT   writer trusts the file position (no seek to E): FAILED (failures=44, errors=24)
+CAUGHT   rollback does not truncate: FAILED (failures=1, errors=1)
+CAUGHT   size cap off by one: FAILED (errors=1)
+CAUGHT   index applied as put for a delete: FAILED (failures=3)
+CAUGHT   fast path skips the crc32 check: FAILED (failures=1)
+CAUGHT   fast path skips the trailer check: FAILED (failures=1)
+CAUGHT   snapshot: skip the 'matches the log' check: FAILED (failures=1)
+CAUGHT   snapshot: skip the crc32 check: FAILED (failures=1)
+CAUGHT   recovery never starts from the snapshot: FAILED (failures=2)
+CAUGHT   leftover .idx.tmp not removed at open: FAILED (failures=1)
+CAUGHT   no database lock: FAILED (failures=3)
+SURVIVED commit fsync removed (step 6) (EXPECTED: a process kill cannot see this): OK
+0 unexpected survivor(s) or skip(s)
+exit=0

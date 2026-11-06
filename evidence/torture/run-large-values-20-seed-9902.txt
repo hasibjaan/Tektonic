@@ -1,0 +1,32 @@
+# Phase 7 torture run, mode large-values (random kills)
+# Command: python3 torture.py --iterations 20 --seed 9902 --mode large-values
+# Captured 2026-11-06 20:23:31 IST; load average: 2.71 2.95 2.98
+
+torture: mode large-values seed 9902 iterations 20 writers 3 kvdb kvdb.py
+iter    1 seed 9902 kill_ms  509.3 in_flight 3 acks    146 keys    37 PASS (1.43 s)
+iter    2 seed 9902 kill_ms  327.5 in_flight 3 acks    246 keys    38 PASS (1.38 s)
+iter    3 seed 9902 kill_ms   56.8 in_flight 3 acks    261 keys    37 PASS (1.09 s)
+iter    4 seed 9902 kill_ms  298.3 in_flight 3 acks    349 keys    37 PASS (1.44 s)
+iter    5 seed 9902 kill_ms  364.5 in_flight 3 acks    437 keys    38 PASS (2.04 s)
+iter    6 seed 9902 kill_ms  281.5 in_flight 3 acks    513 keys    38 PASS (1.88 s)
+iter    7 seed 9902 kill_ms  140.0 in_flight 3 acks    558 keys    36 PASS (1.71 s)
+iter    8 seed 9902 kill_ms   93.7 in_flight 3 acks    578 keys    40 PASS (1.59 s)
+iter    9 seed 9902 kill_ms  382.6 in_flight 3 acks    701 keys    35 PASS (2.09 s)
+iter   10 seed 9902 kill_ms  218.9 in_flight 3 acks    764 keys    38 PASS (2.07 s)
+iter   11 seed 9902 kill_ms  537.2 in_flight 3 acks    967 keys    32 PASS (2.59 s)
+iter   12 seed 9902 kill_ms  327.1 in_flight 3 acks   1071 keys    44 PASS (2.64 s)
+iter   13 seed 9902 kill_ms  306.1 in_flight 3 acks   1156 keys    36 PASS (2.89 s)
+iter   14 seed 9902 kill_ms  435.7 in_flight 3 acks   1258 keys    41 PASS (3.18 s)
+iter   15 seed 9902 kill_ms  385.9 in_flight 3 acks   1421 keys    35 PASS (3.37 s)
+iter   16 seed 9902 kill_ms  382.3 in_flight 3 acks   1555 keys    35 PASS (3.52 s)
+iter   17 seed 9902 kill_ms   21.5 in_flight 3 acks   1563 keys    36 PASS (3.11 s)
+iter   18 seed 9902 kill_ms  336.7 in_flight 3 acks   1687 keys    38 PASS (3.66 s)
+iter   19 seed 9902 kill_ms  102.6 in_flight 3 acks   1725 keys    40 PASS (3.62 s)
+iter   20 seed 9902 kill_ms   94.7 in_flight 3 acks   1754 keys    39 PASS (3.65 s)
+PASS 20/20
+kills with at least one request in flight: 20/20 (100.0%)
+average iteration 2.45 s; projected 200 iterations: 489 s
+real 49.04
+user 24.73
+sys 20.42
+exit=0

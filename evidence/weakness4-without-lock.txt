@@ -1,0 +1,22 @@
+# Weakness 4 reproduced: the lock test against a COPY of the engine with the flock removed.
+# The copy's test prints what the second open did. Real code: the same test passes (second open refused).
+# Captured 2026-11-06 19:01:53 IST
+
+F
+======================================================================
+FAIL: test_open_while_another_process_is_mid_write_does_not_cut_its_write (tests.test_lock.LockTest.test_open_while_another_process_is_mid_write_does_not_cut_its_write)
+BREAKING.md weakness 4, reproduced: without the lock this open would treat the
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/.torture-work/nolock/tests/test_lock.py", line 79, in test_open_while_another_process_is_mid_write_does_not_cut_its_write
+    self.assertEqual(read_bytes(path), in_flight)        # nothing cut
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: b'KVD[128 chars]0\xe6\x18\xcdS\xee' != b'KVD[128 chars]0\xe6\x18\xcdS\xee\xa1\x01\x00\x01\x01\x00\x03\x00\x00\x00knew'
+
+----------------------------------------------------------------------
+Ran 1 test in 0.128s
+
+FAILED (failures=1)
+
+second open SUCCEEDED: bytes_cut=14 while the other process was mid-write
+file was 61 bytes, now 47 bytes

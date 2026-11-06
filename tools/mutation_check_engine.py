@@ -1,7 +1,7 @@
 """Prove the engine tests can fail: plant one bug at a time in a COPY of the code.
 
 Usage: python3 tools/mutation_check_engine.py
-For each bug ("mutant"), src/ and tests/ are copied to .torture-work/mutant-*/,
+For each bug ("mutant"), src/, tests/ and kvdb.py are copied to .torture-work/mutant-*/,
 one line is changed in the copy, and tests.test_db, tests.test_crash and tests.test_snapshot run
 there in a fresh process (the crash tests' child processes import the copy too).
 The real source files are never changed.
@@ -49,6 +49,22 @@ MUTANTS = [
      "            index, start = loaded.index, loaded.covered_end", "            index, start = {}, layout.HEADER_SIZE", False),
     ("leftover .idx.tmp not removed at open", "src/kv/recovery.py",
      "        snapshot.remove_leftover(path)                                     # a killed snapshot write", "        pass", False),
+    ("no database lock", "src/kv/db.py",
+     "        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)", "        pass", False),
+    ("compaction deletes the original before the swap", "src/kv/db.py",
+     "            snapshot.remove(self.path)                                        # 5. old offsets: gone",
+     "            snapshot.remove(self.path); os.remove(self.path)", False),
+    ("compaction skips validating the new file", "src/kv/db.py",
+     "            if problem:\n                raise CompactionFailed(problem)", "            if False:\n                raise CompactionFailed(problem)", False),
+    ("compaction keeps the old snapshot", "src/kv/db.py",
+     "            snapshot.remove(self.path)                                        # 5. old offsets: gone", "            pass", False),
+    ("compacted file loses max_bytes", "src/kv/db.py",
+     "_write_fully(f, layout.encode_header(self._max_bytes))", "_write_fully(f, layout.encode_header(0))", False),
+    ("E5 refuses instead of compacting", "src/kv/db.py",
+     "                self._commit_by_compaction(clean, size)              # E5: compact WITH this change, or refuse",
+     "                raise SizeCapReached('planted')", False),
+    ("leftover .compact.tmp not removed at open", "src/kv/recovery.py",
+     "        _remove_quietly(path + COMPACT_TMP_SUFFIX)                         # a killed compaction: never trusted", "        pass", False),
     ("commit fsync removed (step 6)", "src/kv/db.py",
      "os.fsync(self._w.fileno())                            # 6.", "None  # 6.", True),
 ]
@@ -61,6 +77,7 @@ def run_mutant(name, rel, old, new):
         for folder in ("src", "tests"):
             shutil.copytree(os.path.join(ROOT, folder), os.path.join(copy, folder),
                             ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copy(os.path.join(ROOT, "kvdb.py"), copy)          # tests/test_lock.py starts kvdb.py serve
         target = os.path.join(copy, rel)
         with open(target, encoding="utf-8") as f:
             code = f.read()
@@ -70,8 +87,12 @@ def run_mutant(name, rel, old, new):
             f.write(code.replace(old, new))
         env = dict(os.environ)
         env.pop("KVDB_PAUSE_AT", None)
-        result = subprocess.run([sys.executable, "-m", "unittest", "tests.test_db", "tests.test_crash", "tests.test_snapshot"],
-                                cwd=copy, env=env, capture_output=True, text=True, timeout=900)
+        try:
+            result = subprocess.run([sys.executable, "-m", "unittest", "tests.test_db", "tests.test_crash",
+                                     "tests.test_snapshot", "tests.test_lock", "tests.test_compact"],
+                                    cwd=copy, env=env, capture_output=True, text=True, timeout=900)
+        except subprocess.TimeoutExpired:
+            return True, "TIMEOUT after 900 s (a test hung: counted as caught, but the hang is a test bug)"
         last = [l for l in result.stderr.splitlines() if l.startswith(("OK", "FAILED"))]
         return result.returncode != 0, (last[-1] if last else result.stderr[-300:])
     finally:

@@ -1,6 +1,6 @@
 # Recovery benchmark — one million keys (Phase 6)
 
-**Status: the 2-second limit (F3, B6) is met on this laptop after step d (index snapshot).** Slowest open: **1.070 s** on the serve-built dataset; **1.582 s** in the constructed worst case (the last snapshot 250,000 transactions old). Without the snapshot it was 2.889 s, and 4.857 s with the Phase 3 code.
+**Status: the 2-second limit (F3, B6) is met on this laptop.** With the final snapshot rule (keys ÷ 8): slowest open **1.253 s** on a serve-built dataset and **1.127 s** in the constructed worst case (snapshot 125,000 transactions old). Without any snapshot it was 2.889 s, and 4.857 s with the Phase 3 code.
 
 ## Machine and setup
 
@@ -29,7 +29,9 @@
 | Baseline (Phase 3 code) | 4.857, 4.541, 4.600, 4.606, 4.477 | **4.857 s — FAIL** | 4.814 s, 85,002 bytes cut, none of the batch visible | `recovery-benchmark-baseline.txt` |
 | After the fast path in `src/kv/recovery.py` `scan` | 2.889, 2.371, 2.401, 2.365, 2.345 | **2.889 s — FAIL** | 2.354 s, 85,002 bytes cut, none of the batch visible | `recovery-benchmark-after-fastpath.txt` |
 | After step d: index snapshot `<path>.idx` (dataset REBUILT through serve, snapshots written along the way; `READY … snapshot=yes`) | 1.070, 0.981, 0.961, 0.967, 0.953 | **1.070 s — PASS** | 0.987 s, 85,002 bytes cut, none of the batch visible | `recovery-benchmark-after-snapshot.txt` |
-| Worst case for the snapshot rule: the last snapshot covers 750,000 of the 1,000,000 transactions (250,000 replayed) | 1.300, 1.501, 1.582, 1.279, 1.236 | **1.582 s — PASS (over the 1.5 s margin in 2 of 5 runs)** | — | `recovery-benchmark-worst-case.txt` |
+| Worst case, rule keys ÷ 4: the last snapshot covers 750,000 of the 1,000,000 transactions (250,000 replayed) | 1.300, 1.501, 1.582, 1.279, 1.236 | **1.582 s — PASS (over the 1.5 s margin in 2 of 5 runs)** | — | `recovery-benchmark-worst-case.txt` |
+| **Final rule keys ÷ 8 + database lock** (team decision after the row above; dataset REBUILT through serve; load average 7.2 at the start) | 1.253, 1.146, 1.209, 1.114, 1.048 | **1.253 s — PASS** | 1.073 s, 85,002 bytes cut, none of the batch visible | `recovery-benchmark-keys8.txt` |
+| Worst case, rule keys ÷ 8: the last snapshot covers 875,000 of 1,000,000 transactions (125,000 replayed) | 1.127, 1.095, 1.077, 1.079, 1.087 | **1.127 s — PASS (under the 1.5 s margin in every run)** | — | `recovery-benchmark-keys8.txt` |
 
 All 1,000,000 keys were correct after run 1 and run 5 of each series, and after the B6 open.
 
@@ -40,4 +42,4 @@ All 1,000,000 keys were correct after run 1 and run 5 of each series, and after 
 3. **Fix 2 — one unpack per transaction + bulk dict build, rejected:** not faster in a fair alternating comparison (v1 2.27–2.74 s, v2 2.59–2.72 s) and more complex, so it was reverted.
 4. **Garbage collector off during recovery: no effect** (2.79–3.28 s with it on or off, within the noise).
 5. **The floor:** a stripped loop that only does the unavoidable work per transaction (two unpacks, one key slice, one dict insert, one crc32) already takes **1.54–1.59 s** for 1,000,000 transactions on this laptop. A per-transaction Python loop cannot get under the 1.5 s margin here; recovery must replay fewer transactions. That is step d (a checkpoint), which needs the team's approval first.
-6. **Step d — index snapshot, approved and built:** `src/kv/snapshot.py`; written by `src/kv/db.py` `DB._snapshot` after a commit once the transactions since the last snapshot reach max(10,000, keys ÷ 4); loaded by `src/kv/recovery.py` `recover` only if it matches the log (CLAUDE.md section 8a). Loading 1,000,000 entries uses only C-level calls (a scratch prototype measured 0.616 s). The snapshot file for 1,000,000 keys is 18,940,873 bytes. The tail replayed after a snapshot is at most about keys ÷ 4 transactions — the worst case above.
+6. **Step d — index snapshot, approved and built:** `src/kv/snapshot.py`; written by `src/kv/db.py` `DB._snapshot` after a commit once the transactions since the last snapshot reach max(10,000, keys ÷ 4); loaded by `src/kv/recovery.py` `recover` only if it matches the log (CLAUDE.md section 8a). Loading 1,000,000 entries uses only C-level calls (a scratch prototype measured 0.616 s). The snapshot file for 1,000,000 keys is 17,699,433–18,940,873 bytes. The rule was first keys ÷ 4 (worst case 1.582 s); the team changed it to keys ÷ 8, so the tail replayed after a snapshot is at most about keys ÷ 8 transactions (worst case 1.127 s). Building the 1,000,000-key dataset took 423 s with keys ÷ 4 and 503 s with keys ÷ 8 (more snapshot writes, and a busier machine).

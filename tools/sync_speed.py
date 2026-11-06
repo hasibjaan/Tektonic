@@ -25,8 +25,12 @@ def main():
     env.pop("KVDB_PAUSE_AT", None)
     proc = subprocess.Popen([sys.executable, os.path.join(ROOT, "kvdb.py"), "serve", db], env=env,
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    while not proc.stderr.readline().startswith(b"READY"):
-        pass
+    while True:                                                  # never spin on EOF
+        line = proc.stderr.readline()
+        if not line:
+            raise SystemExit("serve exited before READY")
+        if line.startswith(b"READY"):
+            break
     times = []
     for i in range(n):
         t0 = time.perf_counter()

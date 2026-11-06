@@ -1,0 +1,29 @@
+# Evidence: can the engine tests fail? Phase 6 final (keys//8 + database lock); runs test_db, test_crash, test_snapshot, test_lock per mutant.
+# Command: python3 tools/mutation_check_engine.py
+# Captured 2026-11-06 19:12:22 IST
+
+Traceback (most recent call last):
+  File "/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/tools/mutation_check_engine.py", line 102, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/tools/mutation_check_engine.py", line 86, in main
+    caught, detail = run_mutant(name, rel, old, new)
+                     ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/kill-it-team/tools/mutation_check_engine.py", line 75, in run_mutant
+    result = subprocess.run([sys.executable, "-m", "unittest", "tests.test_db", "tests.test_crash", "tests.test_snapshot", "tests.test_lock"],
+                            cwd=copy, env=env, capture_output=True, text=True, timeout=900)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 556, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 1222, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 2129, in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py", line 1269, in _check_timeout
+    raise TimeoutExpired(
+    ...<2 lines>...
+            stderr=b''.join(stderr_seq) if stderr_seq else None)
+subprocess.TimeoutExpired: Command '['/usr/local/bin/python3', '-m', 'unittest', 'tests.test_db', 'tests.test_crash', 'tests.test_snapshot', 'tests.test_lock']' timed out after 900 seconds
+exit=1
