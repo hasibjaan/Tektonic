@@ -72,6 +72,7 @@ src/
     db.py               open, put, get, delete, batch, compact, close
     recovery.py         reading the file back after a crash; check
     pause.py            pause points
+    errors.py           the named error classes (added in Phase 3)
 tester/                 THE TESTER'S INTERNALS — never imports src.kv
   __init__.py
   oracle.py  workload.py  modes.py
