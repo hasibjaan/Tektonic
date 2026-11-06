@@ -31,6 +31,19 @@ def main():
         sys.stderr.flush()
     elif scenario == "close":
         db.close()
+    elif scenario == "compact":                   # compaction of whatever the parent prepared
+        db.compact()
+    elif scenario == "fill":                      # E3: write until the size cap refuses, then wait
+        from src.kv import SizeCapReached
+        i = 0
+        while True:
+            try:
+                db.put(b"f%06d" % i, b"x" * 20)
+            except SizeCapReached:
+                break
+            i += 1
+        sys.stderr.write("FULL {}\n".format(i))
+        sys.stderr.flush()
     elif scenario == "snapshot":                  # 60 puts with a snapshot every 50 transactions
         db.close()
         db, _ = open_db(path, snapshot_every=50)

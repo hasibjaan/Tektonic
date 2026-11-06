@@ -295,16 +295,20 @@ class CapTest(unittest.TestCase):
             with opened(path, max_bytes=16 + 34 + 33) as db:                # room for 2 small puts
                 db.put(b"hasib", b"20")                                      # 34 bytes
                 db.put(b"ali", b"300")                                       # 33 bytes: exactly full
-                size = os.path.getsize(path)
+                self.assertEqual(os.path.getsize(path), 16 + 34 + 33)        # appended, NOT compacted:
+                # a write that fits exactly must not trigger E5 (the cap test is end + size > max_bytes)
+                before = read_bytes(path)
+                # Since Phase 7 (E5) a write that does not fit first tries compaction; these do not
+                # fit even compacted (one batch: 16 + 20 + 14 + 13 + ...), so they are refused:
                 with self.assertRaises(SizeCapReached):
-                    db.put(b"x", b"")
+                    db.put(b"x", b"v" * 40)                                  # compacted: 111 > 83
                 with self.assertRaises(SizeCapReached):
-                    db.batch([("put", b"y", b"1"), ("put", b"z", b"2")])
-                self.assertEqual(os.path.getsize(path), size)
+                    db.batch([("put", b"y", b"1" * 20), ("put", b"z", b"2" * 20)])   # 119 > 83
+                self.assertEqual(read_bytes(path), before)                   # refused = file unchanged
                 self.assertEqual((db.get(b"hasib"), db.get(b"y")), (b"20", None))
             with opened(path) as db:                                       # cap survives a reopen
                 with self.assertRaises(SizeCapReached):
-                    db.put(b"x", b"")
+                    db.put(b"x", b"v" * 40)
 
     def test_cap_is_fixed_at_creation(self):
         with WorkDir() as w:
