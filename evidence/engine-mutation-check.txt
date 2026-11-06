@@ -1,0 +1,16 @@
+# Evidence: can the engine tests fail? One planted bug at a time, in a COPY of src/ and tests/.
+# Command: python3 tools/mutation_check_engine.py   (runs tests.test_db + tests.test_crash per mutant)
+# Captured 2026-11-06 15:43:17 IST, macOS 15.8.1, python3 3.13.9.
+
+CAUGHT   recovery cuts one byte too little: FAILED (errors=22)
+CAUGHT   recovery does not restore the trailer: FAILED (errors=4)
+CAUGHT   recovery truncates instead of refusing corruption: FAILED (failures=2)
+CAUGHT   writer trusts the file position (no seek to E): FAILED (failures=42, errors=13)
+CAUGHT   rollback does not truncate: FAILED (failures=1, errors=1)
+CAUGHT   size cap off by one: FAILED (errors=1)
+CAUGHT   index applied as put for a delete: FAILED (failures=2)
+SURVIVED commit fsync removed (step 6) (EXPECTED: a process kill cannot see this): OK
+0 unexpected survivor(s) or skip(s)
+exit=0
+
+Note: the survivor is expected. After a PROCESS kill the OS page cache still holds every byte a completed write() handed it, so removing the commit fsync is invisible to these tests. It matters for power loss / OS crash, which we do not claim (CLAUDE.md section 9, BREAKING.md section 3).
