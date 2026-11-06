@@ -107,25 +107,127 @@ rehearsal/              crash-here questions and answers (not committed)
 | close | — | nothing |
 | check | path | (ok, reason) — **read-only, never repairs** |
 
-- Keys: 1 to 1,024 bytes. Values: 0 to 1 MB, where 1 MB = `[DECIDED IN PHASE 1]` bytes. Batches: 1 to 10,000 operations. At least 1,000,000 keys.
+- Keys: 1 to 1,024 bytes. Values: 0 to 1 MB, where 1 MB = **1,048,576** bytes (decided in Phase 1). Batches: 1 to 10,000 operations. At least 1,000,000 keys.
 - **Inside the engine, keys and values are always `bytes`, never `str`.**
 - An empty value (`b""`) is not a missing key (`None`). Deleting a missing key succeeds.
 - Invalid input is rejected **before any byte is written**.
 - A batch applies in list order. The last operation on a key wins.
 - put, delete and batch all go through **one** transaction write path.
-- Errors are raised as a small set of named exception classes (invalid input, size cap reached, not our file, database failed). README lists them.
+- Errors are raised as a small set of named exception classes (invalid input, size cap reached, not our file, corrupt file, database failed). README lists them. "Corrupt file" was added in Phase 1: open refuses a file with a bad byte that a kill cannot produce (section 10).
+- The size cap is fixed when the file is created. Opening an existing file with a different non-zero `--max-bytes` is rejected as invalid input; the file is not changed.
 
 ## 8. On-disk format — FROZEN IN PHASE 1
 
-`[Phase 1 writes the approved byte layout here. Until it does, write no engine code.]`
+Approved by the team on 2026-11-06 (Part D reference design plus the Phase 1 decisions). All integers are **unsigned, little-endian**. The `struct` format is given for each part.
+
+**File header — 16 bytes at offset 0** — `<4sHHQ`
+
+| Offset | Size | Field | Value |
+|---|---|---|---|
+| 0 | 4 | magic | `b"KVDB"` |
+| 4 | 2 | version | `1` — any other value: refuse |
+| 6 | 2 | flags | `0` — any other value: refuse |
+| 8 | 8 | max_bytes | `0` = no cap; otherwise the cap on the **whole file size** in bytes (header included). Fixed at creation |
+
+**Transactions** follow back to back from offset 16. Every put, delete and batch is exactly one transaction:
+
+| Part | Size | Fields | `struct` |
+|---|---|---|---|
+| Transaction header | 3 | type u8 = `0xA1` · op_count u16, 1 to 10,000 | `<BH` |
+| Each operation | 7 + key_len + val_len | op u8 (`1` = put, `2` = delete) · key_len u16, 1 to 1,024 · val_len u32, 0 to 1,048,576 (always 0 for delete) · key bytes · value bytes | `<BHI` |
+| Commit marker | 16 | magic `b"CMIT"` · body_len u64 · crc32 u32 | `<4sQI` |
+| Trailer | 1 | `0xEE` — a throwaway byte, so a 1-byte cut of the end (F4) loses nothing | `<B` |
+
+- **body** = the transaction header plus every operation. `body_len` = the number of bytes in body. `crc32` = `zlib.crc32` over body. The checksum does not cover the marker or the trailer.
+- **Byte cost:** put = 27 + key + value. Delete = 27 + key. Batch of n ops = 20 + 7n + Σkey + Σvalue. Empty database file = 16 bytes.
+- The largest legal body is 3 + 10,000 × (7 + 1,024 + 1,048,576) = 10,496,070,003 bytes. That needs the u64 body_len. It must be **streamed**, never built in memory (8 GB RAM on this laptop).
+
+**Index — in memory only, never on disk:** a dict from key (`bytes`) to one packed integer `(value_offset << 21) | value_length`. 21 bits, because the length can be 1,048,576 = 2²⁰. Delete removes the key. An empty value is present with length 0; a missing key is absent from the dict.
 
 ## 9. Write order — FROZEN IN PHASE 1
 
-`[Phase 1 writes the approved numbered sequence here.]`
+One transaction write path for put, delete and batch. Pause points are shown in brackets.
+
+```
+take the database lock (section 12)
+ 1. validate the WHOLE request: bytes types, key 1–1,024, value ≤ 1,048,576,
+    1–10,000 ops, delete has no value, database not failed, and when
+    max_bytes > 0: end + transaction size ≤ max_bytes
+    → any problem: raise, file untouched
+ 2. remember the end offset E (tracked, never the file position)  [write.before-body]
+ 3. seek to E; write the transaction header and every op, looping until all
+    bytes are out, CRC built up as bytes are produced              [write.mid-body]
+                                                                   [write.after-body]
+ 4. os.fsync                         ← the body is on disk          [write.after-body-sync]
+ 5. write the commit marker and the trailer (loop)                 [write.after-marker]
+ 6. os.fsync                         ← the transaction is committed [write.after-commit-sync]
+ 7. apply every op to the dict in list order; end = E + size       [write.after-index]
+ 8. release the lock and return success — serve prints ACK and flushes
+on any error in 3–6: truncate to E, os.fsync, raise.
+  If that truncate or fsync also fails: mark the database failed; every later
+  write is refused until it is reopened.
+```
+
+**Sync call — decided in Phase 1 (option a):** every "os.fsync" above is plain `os.fsync`. We claim **process death only** (section 16). On macOS `os.fsync` moves data to the drive but does not make the drive write it to permanent storage or keep the order — that needs `fcntl.F_FULLFSYNC`, which we do not use. Power loss and OS crashes are therefore **not claimed**. Evidence: `evidence/fsync-macos.txt`. Recorded as a known weakness in BREAKING.md section 3.
 
 ## 10. Recovery — FROZEN IN PHASE 1
 
-`[Phase 1 writes the approved steps here.]`
+**Rule:** a kill only ever cuts the end of the file. So there are exactly two kinds of bad file:
+
+- **TORN** — a field needs more bytes than the file has left. Repair it by cutting the tail.
+- **CORRUPT** — any other bad byte, which a kill cannot produce. Open **refuses**, the file is left untouched, and nothing is written.
+
+```
+1. File missing → write the 16-byte header (max_bytes from the caller),
+   loop, os.fsync the file, os.fsync the directory.          [create.mid-header]
+2. File shorter than 16 bytes:
+     its bytes are a prefix of b"KVDB" 01 00 00 00 (bytes 8+ are max_bytes, any value)
+       → interrupted creation: write a fresh full header at offset 0, os.fsync
+     otherwise → refuse (not our file), untouched
+3. magic ≠ KVDB → refuse (not our file). version ≠ 1 or flags ≠ 0 → refuse. Untouched.
+   A non-zero max_bytes from the caller that differs from the header → refuse (invalid input).
+4. Scan from p = 16 (mmap, prebuilt Struct.unpack_from, no slicing copies).
+   At each transaction start:
+     p == file size                              → clean end, stop
+     fewer than 3 bytes left                      → TORN at p
+     type ≠ 0xA1 or op_count not 1–10,000         → CORRUPT
+     for each op:
+       fewer than 7 bytes left                    → TORN at p
+       op not 1/2, key_len not 1–1,024,
+       val_len > 1,048,576, delete with val_len ≠ 0 → CORRUPT
+       fewer than key_len + val_len bytes left    → TORN at p
+       stage (op, key, value offset, value length) — NOT in the dict yet
+     fewer than 16 bytes left for the marker      → TORN at p
+     magic ≠ CMIT, body_len ≠ real body length,
+     crc32 ≠ zlib.crc32(body)                     → CORRUPT
+     apply the staged ops to the dict in order     [recovery.replay]
+     next position q = end of the marker:
+       q == file size → TRAILER MISSING (allowed only here, at the very end); stop
+       byte at q == 0xEE → p = q + 1, continue
+       anything else     → CORRUPT
+5. CORRUPT anywhere → refuse to open (corrupt file), report the offset, write nothing.
+6. TORN at p                                       [recovery.before-cut]
+     → os.ftruncate to the ABSOLUTE offset p, os.fsync  [recovery.after-cut]
+     (safe to repeat: a second run truncates to the same p)
+7. TRAILER MISSING                                 [recovery.before-trailer]
+     → write 0xEE at the end, os.fsync — BEFORE any new write is accepted.
+   Steps 6 and 7 never both apply: a TORN stop is always right after a trailer.
+8. end = file size. Report: key count, seconds, bytes cut, trailer restored yes/no.
+```
+
+**check** runs steps 1–4 **read-only**, never repairs, and prints exactly one of:
+
+| File | check prints |
+|---|---|
+| clean | `OK` |
+| torn tail | `TORN_TAIL at <offset>, <n> bytes` |
+| last trailer missing | `MISSING_TRAILER at <offset>` |
+| a bad byte a kill cannot produce | `CORRUPT at <offset>: <what>` |
+| not our file (magic, version, flags, short non-prefix) | `NOT_OUR_FILE: <why>` |
+| shorter than 16 bytes, but a prefix of a valid header | `INTERRUPTED_CREATE (<n> bytes)` |
+| no file at the path | `NO_FILE` |
+
+Exit codes for check are decided in Phase 4.
 
 ## 11. Compaction order — FROZEN IN PHASE 7
 
@@ -135,11 +237,10 @@ rehearsal/              crash-here questions and answers (not committed)
 
 - **Write handle:** the data file opened in binary mode with `buffering=0`. Every write loops until all bytes are written, because an unbuffered write can be short. The writer always seeks to the tracked end offset before writing — never trusts the current position.
 - **Read handle:** a second handle, binary, `buffering=0`, used only by get. Unbuffered so it can never return stale bytes after a rollback.
-- **`write_lock`** (`threading.Lock`): held by every mutation from validation until the index is updated. Writers never overlap.
-- **`index_lock`** (`threading.Lock`): a reader holds it across the dict lookup **and** the read from the read handle. A writer takes it only to apply an already-committed transaction to the dict. Compaction takes both locks.
-- Result: a reader sees the state before a batch or after it, never in between, and readers never wait for a disk write or sync.
-- Python's GIL does **not** make a multi-step write safe. The locks do.
-- Fallback allowed by the brief if time is short: one global lock for everything. Phase 1 records which design we chose.
+- **Chosen in Phase 1: ONE global lock.** `lock` (`threading.Lock`) is held by put, delete and batch from validation until the index is updated, by get across the dict lookup **and** the read from the read handle, and by compact and close for their whole run. Nothing overlaps.
+- Result: a reader sees the state before a batch or after it, never in between (D4), because get cannot run while a batch holds the lock. The cost, accepted by the team: a get waits behind any write and its two fsyncs.
+- Python's GIL does **not** make a multi-step write safe. The lock does.
+- Not chosen: the two-lock design (`write_lock` plus `index_lock`), where readers never wait for a sync. If we switch to it, this section changes first.
 
 ## 13. Pause points (targeted crash tests)
 
