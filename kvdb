@@ -1,0 +1,4 @@
+#!/bin/sh
+# Launcher so the judge's ./kvdb commands work as printed (macOS / Linux).
+# Runs kvdb.py with python3, the Python recorded in CLAUDE.md section 5.
+exec python3 "$(dirname "$0")/kvdb.py" "$@"
