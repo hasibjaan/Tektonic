@@ -1,0 +1,29 @@
+# What the unanswered (in-flight) requests were at the kills, and what recovery made of them.
+# Source: the oracle's own logs (oracle.log in the work folder; .torture-work/ is not committed).
+# For every "DECIDED <id> applied|absent|either" line, the request kind comes from its "SEND <id> <summary>" line.
+# Captured 2026-11-06, right after the runs below. Script used (run from the repository root):
+#
+#   import re, collections
+#   sends, out = {}, collections.Counter()
+#   for line in open(PATH, encoding="utf-8"):
+#       m = re.match(r"SEND (\S+) (.*)", line)
+#       if m: sends[m.group(1)] = m.group(2); continue
+#       m = re.match(r"DECIDED (\S+) (\w+)", line)
+#       if m:
+#           s = sends[m.group(1)]; kind = s.split(" of ")[0].split(" ")[0]
+#           bucket = kind if kind != "batch" else ("batch>=1000" if int(s.split()[-1]) >= 1000 else "batch<1000")
+#           out[(bucket, m.group(2))] += 1
+#
+# "either" = applying it or not gives the same state (for example a delete of a key that is already absent).
+
+run-large-batches-10-seed-424299 (30 unanswered requests at 10 kills):
+  batch>=1000  absent 22   applied 1
+  put          absent 6
+  del          absent 1
+  -> 23 batches of 1,000 to 10,000 operations were in flight at a kill; every one is all or nothing.
+
+run-default-200-seed-777001 (600 unanswered requests at 200 kills):
+  put          absent 248  applied 27
+  del          absent 84   applied 8   either 25
+  batch<1000   absent 179  applied 28  either 1
+  -> 63 requests were applied although no ACK was ever received (allowed: rule 2; scenarios A3, A4, B3).

@@ -1,0 +1,62 @@
+# Phase 5 EXIT run: random hard kills against the real engine, seed never used before.
+# Command: python3 torture.py --iterations 50 --seed 60606
+# Captured 2026-11-06 16:20:13 IST, macOS 15.8.1, python3 3.13.9, commit 2a05956 + uncommitted Phase 5 tester
+
+torture: mode default seed 60606 iterations 50 writers 3 kvdb kvdb.py
+iter    1 seed 60606 kill_ms  272.2 in_flight 3 acks    601 keys   37 PASS (0.77 s)
+iter    2 seed 60606 kill_ms   55.6 in_flight 3 acks    723 keys   29 PASS (0.55 s)
+iter    3 seed 60606 kill_ms  386.2 in_flight 3 acks   1609 keys   37 PASS (0.90 s)
+iter    4 seed 60606 kill_ms  214.1 in_flight 3 acks   2092 keys   37 PASS (0.78 s)
+iter    5 seed 60606 kill_ms  283.3 in_flight 3 acks   2684 keys   42 PASS (0.84 s)
+iter    6 seed 60606 kill_ms  337.4 in_flight 3 acks   3445 keys   29 PASS (0.91 s)
+iter    7 seed 60606 kill_ms  164.0 in_flight 3 acks   3816 keys   40 PASS (0.75 s)
+iter    8 seed 60606 kill_ms  178.1 in_flight 3 acks   4201 keys   36 PASS (0.76 s)
+iter    9 seed 60606 kill_ms  313.7 in_flight 3 acks   4901 keys   42 PASS (0.92 s)
+iter   10 seed 60606 kill_ms  242.7 in_flight 3 acks   5446 keys   44 PASS (0.86 s)
+iter   11 seed 60606 kill_ms   81.1 in_flight 3 acks   5636 keys   33 PASS (0.71 s)
+iter   12 seed 60606 kill_ms  332.7 in_flight 3 acks   6393 keys   34 PASS (0.99 s)
+iter   13 seed 60606 kill_ms   94.4 in_flight 3 acks   6590 keys   40 PASS (0.75 s)
+iter   14 seed 60606 kill_ms  193.7 in_flight 3 acks   7027 keys   35 PASS (0.88 s)
+iter   15 seed 60606 kill_ms  237.6 in_flight 3 acks   7562 keys   31 PASS (0.90 s)
+iter   16 seed 60606 kill_ms  166.5 in_flight 3 acks   7952 keys   35 PASS (0.85 s)
+iter   17 seed 60606 kill_ms  197.3 in_flight 3 acks   8407 keys   37 PASS (0.89 s)
+iter   18 seed 60606 kill_ms  112.2 in_flight 3 acks   8650 keys   33 PASS (0.83 s)
+iter   19 seed 60606 kill_ms  267.1 in_flight 3 acks   9261 keys   37 PASS (0.98 s)
+iter   20 seed 60606 kill_ms  262.4 in_flight 3 acks   9839 keys   38 PASS (1.04 s)
+iter   21 seed 60606 kill_ms  273.8 in_flight 3 acks  10451 keys   34 PASS (1.01 s)
+iter   22 seed 60606 kill_ms  305.0 in_flight 3 acks  11137 keys   35 PASS (1.07 s)
+iter   23 seed 60606 kill_ms  327.4 in_flight 3 acks  11867 keys   39 PASS (1.10 s)
+iter   24 seed 60606 kill_ms  102.0 in_flight 3 acks  12087 keys   32 PASS (0.86 s)
+iter   25 seed 60606 kill_ms  386.1 in_flight 3 acks  12966 keys   35 PASS (1.19 s)
+iter   26 seed 60606 kill_ms  152.0 in_flight 3 acks  13305 keys   31 PASS (0.96 s)
+iter   27 seed 60606 kill_ms  204.0 in_flight 3 acks  13756 keys   30 PASS (1.03 s)
+iter   28 seed 60606 kill_ms  263.2 in_flight 3 acks  14331 keys   40 PASS (1.11 s)
+iter   29 seed 60606 kill_ms  112.8 in_flight 3 acks  14586 keys   41 PASS (0.98 s)
+iter   30 seed 60606 kill_ms  232.6 in_flight 3 acks  15102 keys   36 PASS (1.12 s)
+iter   31 seed 60606 kill_ms  231.9 in_flight 3 acks  15635 keys   35 PASS (1.09 s)
+iter   32 seed 60606 kill_ms   75.6 in_flight 3 acks  15801 keys   38 PASS (0.98 s)
+iter   33 seed 60606 kill_ms  379.1 in_flight 3 acks  16650 keys   36 PASS (1.27 s)
+iter   34 seed 60606 kill_ms   71.0 in_flight 3 acks  16814 keys   33 PASS (0.97 s)
+iter   35 seed 60606 kill_ms  199.1 in_flight 3 acks  17269 keys   32 PASS (1.16 s)
+iter   36 seed 60606 kill_ms   77.3 in_flight 3 acks  17443 keys   37 PASS (1.00 s)
+iter   37 seed 60606 kill_ms   77.2 in_flight 3 acks  17607 keys   33 PASS (1.07 s)
+iter   38 seed 60606 kill_ms  368.5 in_flight 3 acks  18239 keys   36 PASS (1.43 s)
+iter   39 seed 60606 kill_ms   21.1 in_flight 3 acks  18282 keys   40 PASS (1.16 s)
+iter   40 seed 60606 kill_ms  268.5 in_flight 3 acks  18891 keys   35 PASS (1.24 s)
+iter   41 seed 60606 kill_ms   14.1 in_flight 3 acks  18919 keys   36 PASS (0.98 s)
+iter   42 seed 60606 kill_ms   37.0 in_flight 3 acks  18997 keys   32 PASS (1.00 s)
+iter   43 seed 60606 kill_ms   82.2 in_flight 3 acks  19153 keys   40 PASS (1.13 s)
+iter   44 seed 60606 kill_ms  322.9 in_flight 3 acks  19868 keys   37 PASS (1.29 s)
+iter   45 seed 60606 kill_ms   83.4 in_flight 3 acks  20048 keys   30 PASS (1.05 s)
+iter   46 seed 60606 kill_ms  205.5 in_flight 3 acks  20491 keys   34 PASS (1.20 s)
+iter   47 seed 60606 kill_ms  143.1 in_flight 3 acks  20809 keys   41 PASS (1.15 s)
+iter   48 seed 60606 kill_ms  326.7 in_flight 3 acks  21536 keys   32 PASS (1.35 s)
+iter   49 seed 60606 kill_ms  301.6 in_flight 3 acks  22239 keys   33 PASS (1.32 s)
+iter   50 seed 60606 kill_ms  120.2 in_flight 3 acks  22490 keys   40 PASS (1.18 s)
+PASS 50/50
+kills with at least one request in flight: 50/50 (100.0%)
+average iteration 1.01 s; projected 200 iterations: 201 s
+real 50.43
+user 35.55
+sys 10.63
+exit=0

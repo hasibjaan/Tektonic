@@ -1,0 +1,22 @@
+# Random kills with values up to 1,048,576 bytes.
+# Command: python3 torture.py --iterations 10 --seed 999111 --mode large-values
+# Captured 2026-11-06 16:28:04 IST, macOS 15.8.1, python3 3.13.9, commit 2a05956 + uncommitted Phase 5 tester
+
+torture: mode large-values seed 999111 iterations 10 writers 3 kvdb kvdb.py
+iter    1 seed 999111 kill_ms  175.7 in_flight 3 acks     40 keys   35 PASS (1.01 s)
+iter    2 seed 999111 kill_ms  423.3 in_flight 3 acks    126 keys   40 PASS (1.65 s)
+iter    3 seed 999111 kill_ms  104.5 in_flight 3 acks    138 keys   44 PASS (1.40 s)
+iter    4 seed 999111 kill_ms  469.7 in_flight 3 acks    234 keys   34 PASS (1.73 s)
+iter    5 seed 999111 kill_ms  106.4 in_flight 3 acks    257 keys   37 PASS (1.49 s)
+iter    6 seed 999111 kill_ms   26.7 in_flight 2 acks    268 keys   35 PASS (1.31 s)
+iter    7 seed 999111 kill_ms  534.4 in_flight 3 acks    382 keys   42 PASS (2.06 s)
+iter    8 seed 999111 kill_ms  287.4 in_flight 3 acks    430 keys   34 PASS (1.98 s)
+iter    9 seed 999111 kill_ms  569.6 in_flight 3 acks    572 keys   36 PASS (2.52 s)
+iter   10 seed 999111 kill_ms  484.3 in_flight 3 acks    661 keys   31 PASS (2.55 s)
+PASS 10/10
+kills with at least one request in flight: 10/10 (100.0%)
+average iteration 1.77 s; projected 200 iterations: 354 s
+real 17.80
+user 10.57
+sys 6.30
+exit=0
