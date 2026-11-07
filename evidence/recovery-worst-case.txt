@@ -1,0 +1,15 @@
+# Fix 4c: recovery time in every crash state, AFTER the index cache was removed (Fix 2, decision A)
+# Command: python3 tools/recovery_worst_case.py 5
+# Laptop: Intel i5-8259U, 8 GB, macOS 15.8.1, SSD/APFS, warm cache. Load average before: 2.45 2.77 2.42
+
+captured 2026-11-07 07:05:07 IST | macOS-15.8.1-x86_64-i386-64bit-Mach-O | Python 3.13.9
+healthy, single puts                                    file    47,000,016 bytes  runs 2.469 2.433 2.420 2.415 2.384  WORST 2.469 s   (READY keys=1000000 recovery_ms=2296 bytes_cut=0 trailer_restored=no)
+healthy, batched                                        file    27,002,016 bytes  runs 1.334 1.323 1.325 1.349 1.349  WORST 1.349 s   (READY keys=1000000 recovery_ms=1262 bytes_cut=0 trailer_restored=no)
+F4: 1-byte cut, single puts                             file    47,000,015 bytes  runs 2.366 2.393 2.360 2.399 2.412  WORST 2.412 s   (READY keys=1000000 recovery_ms=2323 bytes_cut=0 trailer_restored=yes)
+kill at compact.before-swap (original = single puts)    file    47,000,016 bytes  runs 2.542 2.439 2.391 2.377 2.416  WORST 2.542 s   (READY keys=1000000 recovery_ms=2328 bytes_cut=0 trailer_restored=no)
+B6: half a 10,000-op batch, single puts                 file    47,130,026 bytes  runs 2.406 2.394 2.444 2.481 2.401  WORST 2.481 s   (READY keys=1000000 recovery_ms=2312 bytes_cut=130010 trailer_restored=no)
+B6: half a 10,000-op batch, batched                     file    27,132,026 bytes  runs 1.350 1.438 1.343 1.329 1.344  WORST 1.438 s   (READY keys=1000000 recovery_ms=1255 bytes_cut=130010 trailer_restored=no)
+tail of 100 x 1 MB values, batched                      file   131,862,916 bytes  runs 1.452 1.392 1.414 1.401 1.394  WORST 1.452 s   (READY keys=1000100 recovery_ms=1306 bytes_cut=0 trailer_restored=no)
+tail of 20 batches of 10,000 ops, batched               file    32,402,416 bytes  runs 1.596 1.577 1.566 1.577 1.563  WORST 1.596 s   (READY keys=1200000 recovery_ms=1475 bytes_cut=0 trailer_restored=no)
+cases at or above 1.8 s: healthy, single puts, F4: 1-byte cut, single puts, kill at compact.before-swap (original = single puts), B6: half a 10,000-op batch, single puts
+exit=0
