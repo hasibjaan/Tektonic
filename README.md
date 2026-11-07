@@ -371,6 +371,7 @@ A kill before step 7 leaves the original complete (open deletes the temporary fi
 | `CorruptFile` | a bad byte that a kill cannot produce (section "Recovery algorithm", step 7) | no |
 | `OSError` (from the OS) | a write or fsync failed and the rollback succeeded: the file is back at the end offset E | no |
 | `CompactionFailed` | compaction stopped before its swap: a write error such as a full disk, the new file failed its check, or the result would exceed `max_bytes` | no — the temporary file is deleted, the database stays usable |
+| `UnsupportedPlatform` | the platform has no OS lock we support (`fcntl.flock`, macOS and Linux) — open refuses rather than run unprotected (final fix round) | no — nothing is created or read |
 | `DatabaseBusy` | another open (another process, or the same process) already has the database: it holds `<path>.lock` | no |
 | `DatabaseFailed` | a write failed **and** the rollback truncate or its fsync also failed; every later write is refused until reopen. Also raised for any operation on a closed database | the failed write may remain as a torn tail (the next open cuts it) or — only if the second fsync failed — as a complete transaction that the next open applies; see below |
 
@@ -385,7 +386,7 @@ Measured on our demo laptop (CLAUDE.md section 5, `evidence/platform-probe.txt`,
 - `fsync` of a directory after `os.replace` works; we do it after every compaction and snapshot swap.
 - `os.replace` onto a file that is still open works, but a handle opened before the swap keeps reading the OLD file — so compaction closes both handles before the swap and reopens them after.
 - `os.fsync` on macOS moves data to the drive but does not make the drive store it in order (`man 2 fsync`); `F_FULLFSYNC` would. We claim process death only.
-- The lock (`fcntl.flock`) and the directory fsync are macOS/Linux features. Windows has neither in our code: NOT TESTED there.
+- **Supported platforms: macOS and Linux** (`fcntl.flock`). On a platform without it — e.g. Windows — `open` raises `UnsupportedPlatform` instead of running without a lock, because two unlocked opens of one file were shown to lose an acknowledged write (`tests/test_lock.py` `AuditReproductionTest`). Only macOS was tested.
 
 ## Measured results
 

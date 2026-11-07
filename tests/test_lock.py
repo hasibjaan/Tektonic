@@ -6,7 +6,8 @@ import sys
 import threading
 import unittest
 
-from src.kv import DatabaseBusy, InvalidInput, check, open_db
+from src.kv import DatabaseBusy, InvalidInput, UnsupportedPlatform, check, open_db
+from src.kv import db as dbmod
 from tests.kvtest_util import ROOT, WorkDir, read_bytes
 
 TIMEOUT = 60
@@ -112,6 +113,45 @@ class LockTest(unittest.TestCase):
             r = subprocess.run([sys.executable, kvdb, "get", path, "ali"], env=env, capture_output=True,
                                timeout=TIMEOUT)
             self.assertEqual(r.stdout, b"30\n")
+
+
+
+class AuditReproductionTest(unittest.TestCase):
+    """Final fix round, Fix 3: the audit's two-handle reproduction, kept as a permanent test.
+    Without an OS lock, two opens of one file both 'succeeded' and, after reopening, the
+    first acknowledged write was GONE (reproduced on our Mac by hiding fcntl)."""
+
+    def steps(self, path):
+        a, _ = open_db(path)
+        try:
+            b, _ = open_db(path)                    # must be refused
+        except DatabaseBusy:
+            b = None
+        a.put(b"first", b"1")                       # success = acknowledged
+        if b is not None:
+            b.put(b"second", b"2")
+            b.close()
+        a.close()
+        with open_db(path)[0] as c:
+            return b is None, c.get(b"first")
+
+    def test_with_the_lock_no_acknowledged_write_is_lost(self):
+        with WorkDir() as w:
+            refused, first = self.steps(w.path("db.kv"))
+            self.assertTrue(refused)                # the second open got DatabaseBusy
+            self.assertEqual(first, b"1")           # the acknowledged write survived
+
+    def test_without_an_os_lock_open_refuses_instead_of_running_unprotected(self):
+        with WorkDir() as w:
+            path = w.path("db.kv")
+            real = dbmod.fcntl
+            dbmod.fcntl = None                      # what a platform without fcntl looks like
+            try:
+                with self.assertRaises(UnsupportedPlatform):
+                    open_db(path)
+            finally:
+                dbmod.fcntl = real
+            self.assertFalse(os.path.exists(path))  # refused before touching anything
 
 
 if __name__ == "__main__":

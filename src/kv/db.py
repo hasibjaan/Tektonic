@@ -5,17 +5,19 @@ the frozen write order in CLAUDE.md section 9 step by step. One global lock
 (section 12) is held by every operation, so nothing ever overlaps.
 """
 import os
+import sys
 import threading
 
 try:
     import fcntl                      # macOS and Linux
-except ImportError:                   # Windows: no fcntl, so no lock (a platform limit, NOT TESTED)
+except ImportError:                   # Windows: no fcntl -> open_db refuses (UnsupportedPlatform)
     fcntl = None
 
 from . import layout
 from . import recovery
 from . import snapshot
-from .errors import CompactionFailed, DatabaseBusy, DatabaseFailed, InvalidInput, SizeCapReached
+from .errors import (CompactionFailed, DatabaseBusy, DatabaseFailed, InvalidInput, SizeCapReached,
+                     UnsupportedPlatform)
 from .pause import pause
 
 PUT = layout.OP_PUT
@@ -47,7 +49,10 @@ def _take_lock(path):
     """Exclusive, non-blocking lock on <path>.lock. The kernel drops it when the
     process dies, so a SIGKILL never leaves the database locked."""
     if fcntl is None:
-        return None
+        # Never run unprotected: two opens of one file can each write at "their" end
+        # and lose an acknowledged write (reproduced in tests/test_lock.py).
+        raise UnsupportedPlatform("no supported OS lock on this platform ({}): the engine runs on "
+                                  "macOS and Linux (fcntl.flock)".format(sys.platform))
     fd = os.open(path + ".lock", os.O_RDWR | os.O_CREAT, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

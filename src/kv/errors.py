@@ -38,6 +38,11 @@ class CompactionFailed(KVError):
     deleted; the database is unchanged and still usable."""
 
 
+class UnsupportedPlatform(KVError):
+    """This platform has no OS lock we support (fcntl.flock: macOS and Linux).
+    Opening without one could lose acknowledged writes, so open refuses."""
+
+
 class DatabaseFailed(KVError):
     """A write failed AND its rollback failed, or the database is closed.
     Every later write is refused until the file is reopened."""
