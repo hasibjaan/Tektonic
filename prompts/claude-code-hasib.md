@@ -491,3 +491,8 @@ I want you to change the current readme file to the file i have attached. After 
 </task-notification>
 ~~~~~
 
+### 2026-11-07 09:15:29 · Claude Code · hasib
+~~~~~
+I just did the wifi-off check of the final code and all test was passed. So commit and push all the files that haven't been done. And then tell me how to present this project to the judges. Also tell me were the code is exactly for all the functions ,etc. And all the concepts, words, etc.
+~~~~~
+

@@ -36,7 +36,7 @@ Each row is the pause point at that line (row 7 has none). Rows 1–6 and 8–14
 3. **Our tests cannot see a missing fsync:** it is the one planted bug that survives (`evidence/engine-mutation-check-phase7.txt`).
 4. **Compaction stops the world,** and under a tight `--max-bytes` E5 may compact on nearly every write; compaction of 1,000,000 live keys is NOT measured.
 5. **Platform and margins:** only macOS and Linux are supported — elsewhere `open` refuses with `UnsupportedPlatform`; only macOS was tested; `check` takes no lock.
-6. **Torture time:** 200 default iterations take **126.2 s** (181.1 s before Fix 5): inside the judge's ~180 s, not our 120 s target. Growing modes start a fresh database every N iterations (`--fresh-every`; `evidence/fix5-torture-timing.md`).
+6. **Torture time:** 200 default iterations take **119.2 s** Wi-Fi off, 127.1 s network on (181.1 s before Fix 5): inside the judge's ~180 s, at the edge of our 120 s target. Growing modes start a fresh database every N iterations (`--fresh-every`; `evidence/fix5-torture-timing.md`).
 
 ## 4. What we tried that failed
 

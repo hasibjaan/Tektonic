@@ -28,23 +28,23 @@ Everything is written in Python with the **standard library only**. There are no
 
 ## At a glance
 
-All numbers below are real measurements. Each links to its raw output. The final check ran on commit `b629262`, in a fresh clone, with seeds never used before ([`evidence/final/final-check-20261107-073908.txt`](evidence/final/final-check-20261107-073908.txt)).
+All numbers below are real measurements. Each links to its raw output. The final check (`sh tools/final_check.sh`) ran twice in a fresh clone: with the network on (commit `b629262`, [`final-check-20261107-073908.txt`](evidence/final/final-check-20261107-073908.txt)), then **with Wi-Fi off** on commit `105d945` ([`final-check-20261107-085043.txt`](evidence/final/final-check-20261107-085043.txt)). The table shows the Wi-Fi-off run.
 
 | What | Result | Evidence |
 |---|---|---|
-| Unit tests | **126 tests, all pass** (31.6 s, fresh clone) | [`final-check-20261107-073908.txt`](evidence/final/final-check-20261107-073908.txt) |
-| Judge's command, `./torture --iterations 200` | **PASS 200/200** in **127.1 s** | same file |
-| Longest random run | **PASS 500/500** in 307.2 s | same file |
-| Kills with a request in flight | **100 %** in every random run of the final check | same file |
-| Kills that landed **during a compaction** | **83 of 100** — all passed | same file |
-| Kills that landed **during recovery** | **295** extra kills — all passed | same file |
+| Unit tests | **126 tests, all pass** (27.3 s, fresh clone, Wi-Fi off) | [`final-check-20261107-085043.txt`](evidence/final/final-check-20261107-085043.txt) |
+| Judge's command, `./torture --iterations 200` | **PASS 200/200** in **119.2 s** (Wi-Fi off; 127.1 s with the network on) | same file |
+| Longest random run | **PASS 500/500** in 291.6 s | same file |
+| Kills with a request in flight | **100 %** in every random run of both final checks | same file |
+| Kills that landed **during a compaction** | **84 of 100** — all passed | same file |
+| Kills that landed **during recovery** | **286** extra kills — all passed | same file |
 | Every pause point, hard-killed on purpose | **51/51** (17 points × 3 rounds) | same file |
 | Recovery of 1,000,000 keys written in batches | **1.354 s** slowest of 5 (limit 2 s) ✅ | [`evidence/no-cache-timing.txt`](evidence/no-cache-timing.txt) |
 | Recovery of 1,000,000 single-put transactions | **2.423 s** slowest of 5 — **over the 2 s limit** ❌ | [`evidence/no-cache-timing.txt`](evidence/no-cache-timing.txt) |
 | Shrink after 1,000,000 puts + 1,000,000 deletes | **44,004,016 → 16 bytes** | [`evidence/shrink-test.txt`](evidence/shrink-test.txt) |
 | Broken engines the torture tool must reject | **all rejected**: 4 planted bugs FAIL; an engine that never answers is INCONCLUSIVE, not PASS | [`evidence/torture/`](evidence/torture/), [`evidence/tester-hardening.txt`](evidence/tester-hardening.txt) |
 | Planted bugs the unit tests must catch | **21 of 22 caught** (layout 6/6, engine 15/16); the one survivor is expected (see [Known limits](#known-limits)) | [`evidence/engine-mutation-check-final.txt`](evidence/engine-mutation-check-final.txt), [`evidence/layout-mutation-check.txt`](evidence/layout-mutation-check.txt) |
-| Wi-Fi-off clean clone of the **final** code | **NOT DONE yet** (the final check above ran with the network on and says so). An offline run of older code passed: 200/200 in 169.4 s | [`evidence/final/offline-clean-clone.txt`](evidence/final/offline-clean-clone.txt) |
+| Wi-Fi-off clean clone of the **final** code (`105d945`) | **done: every step passed**; the script recorded `github.com not reachable: the network is off` | [`final-check-20261107-085043.txt`](evidence/final/final-check-20261107-085043.txt) |
 
 ---
 
@@ -683,11 +683,27 @@ We test the database, and we also test **the tests**.
 | `tests/test_oracle.py` | 7 | the torture tool's oracle |
 | `tests/test_lock.py` | 6 | one open at a time; without an OS lock an ACKed write can be lost, so open refuses (`UnsupportedPlatform`) |
 
-Final check in a fresh clone: `Ran 126 tests in 31.357s — OK` ([`evidence/final/final-check-20261107-073908.txt`](evidence/final/final-check-20261107-073908.txt)).
+Final check in a fresh clone: `Ran 126 tests in 31.357s — OK` with the network on; `Ran 126 tests in 27.071s — OK` with Wi-Fi off ([`final-check-20261107-085043.txt`](evidence/final/final-check-20261107-085043.txt)).
 
 ### 2. Final torture runs — fresh clone, never-used seeds
 
-Run by `sh tools/final_check.sh` in a fresh `git clone` of commit `b629262`, exactly as a judge would type them, one after another. Intel i5-8259U, 8 GB RAM, macOS 15.8.1, Python 3.13.9, internal SSD (APFS), other apps open. **The network was on** (the script checks and recorded it).
+Run by `sh tools/final_check.sh` in a fresh `git clone`, exactly as a judge would type them, one after another. Intel i5-8259U, 8 GB RAM, macOS 15.8.1, Python 3.13.9, internal SSD (APFS). The script checks the network and records it. The seeds were new for the first run; the Wi-Fi-off run used the same seeds again (the script fixes them), so its thread timing differed but its workload did not.
+
+**Wi-Fi off**, commit `105d945` (2026-11-07 08:50–09:08 IST, [`final-check-20261107-085043.txt`](evidence/final/final-check-20261107-085043.txt)):
+
+| Command | Result | Wall time | Notable |
+|---|---|---:|---|
+| `./torture --iterations 500 --seed 811001` | **PASS 500/500** | 291.6 s | request in flight at 500/500 kills; 261,460 ACKs |
+| `./torture --iterations 200 --seed 811002` | **PASS 200/200** | **119.2 s** | 115,126 ACKs |
+| `--mode large-values --seed 811003`, 100 | **PASS 100/100** | 108.2 s | values up to 1 MB |
+| `--mode compaction --seed 811004`, 100 | **PASS 100/100** | 73.3 s | **84/100 kills during a compaction** |
+| `--mode recovery-crash --seed 811005`, 100 | **PASS 100/100** | 201.1 s | extra kills: 0 before start-up, **286 during recovery**, 14 after READY |
+| `--mode large-batches --seed 811006`, 100 | **PASS 100/100** | 107.4 s | batches of 1,000–10,000 ops |
+| `--mode disk-full --seed 811007`, 100 | **PASS 100/100** | 53.3 s | 388 clean `SizeCapReached` refusals |
+| `--mode overlap --seed 811008`, 100 | **PASS 100/100** | 56.6 s | 3 writers, 8 shared keys |
+| `--mode targeted --seed 811009`, 3 rounds | **TARGETED PASS 51/51** | 18.9 s | 17 pause points × 3, none untested |
+
+**Network on**, commit `b629262` (same engine and tester code; 2026-11-07 07:39–07:58 IST, [`final-check-20261107-073908.txt`](evidence/final/final-check-20261107-073908.txt)):
 
 | Command | Result | Wall time | Notable |
 |---|---|---:|---|
@@ -770,7 +786,7 @@ Every run below used the code of its phase. Several used the index cache that th
 | Phase 5 | large-values, seed 999111 | PASS 10/10 | — | `evidence/torture/run-large-values-10-seed-999111.txt` |
 | Phase 5 | large-batches, seed 424299 | PASS 10/10; 23 batches of 1,000–10,000 ops in flight at a kill, none partly present | — | `run-large-batches-10-seed-424299.txt`, `in-flight-analysis.txt` |
 
-The 200-iteration time fell from 181.05 s to 127.1 s in the final fix round (Fix 5): a fresh database every N iterations, `check` and `dump` run together, a lazy import — with the kills unchanged ([`evidence/fix5-torture-timing.md`](evidence/fix5-torture-timing.md)).
+The 200-iteration time fell from 181.05 s to 127.1 s (119.2 s with Wi-Fi off) in the final fix round (Fix 5): a fresh database every N iterations, `check` and `dump` run together, a lazy import — with the kills unchanged ([`evidence/fix5-torture-timing.md`](evidence/fix5-torture-timing.md)).
 
 </details>
 
@@ -830,7 +846,7 @@ The cache rows no longer apply: the cache was removed because the brief allows o
 |---|---|---|
 | One durable put through serve | 0.389 ms average (median 0.364 ms) | `tools/sync_speed.py`, [`recovery-benchmark.md`](evidence/recovery-benchmark.md) |
 | Shrink: 1M puts → 1M deletes → compact | 27,002,016 → 44,004,016 → **16 bytes** | [`shrink-test.txt`](evidence/shrink-test.txt) |
-| Judge's `./torture --iterations 200` | **127.1 s** (final check, network on) | [`final-check-20261107-073908.txt`](evidence/final/final-check-20261107-073908.txt) |
+| Judge's `./torture --iterations 200` | **119.2 s** Wi-Fi off · 127.1 s network on | [`final-check-20261107-085043.txt`](evidence/final/final-check-20261107-085043.txt), [`final-check-20261107-073908.txt`](evidence/final/final-check-20261107-073908.txt) |
 | `--mode large-values`, 100 iterations | 117.3 s (was 2,271.83 s before the fresh-database change) | same file |
 | `--mode recovery-crash`, 100 iterations | 241.8 s (slower on purpose: 100,000 prefilled keys, three extra kills per iteration) | same file |
 
@@ -860,10 +876,9 @@ We list what we did **not** prove, so nobody has to find it for us. More in [`BR
 | 3 | **A missing fsync is invisible to our tests.** It is the planted bug that survives the mutation check. | A process kill keeps the page cache, so only a power-loss test could see it. |
 | 4 | **Compaction stops the world.** Under a tight `--max-bytes`, E5 may compact on nearly every write. Compaction of 1,000,000 live keys is NOT measured. | Pauses under heavy load. |
 | 5 | **macOS and Linux only; only macOS tested.** Elsewhere open refuses with `UnsupportedPlatform`. `check` takes no lock. | Run the demo on macOS or Linux. |
-| 6 | **Torture time.** 200 iterations took 127.1 s: inside the judge's ~180 s, but not our own 120 s target. | Close other apps before a timed run. |
+| 6 | **Torture time.** 200 iterations took 119.2 s with Wi-Fi off and 127.1 s with it on: inside the judge's ~180 s, and only just around our own 120 s target. | Close other apps before a timed run. |
 | 7 | **Large values are cut-tested by sampling, not at every byte.** `tests/test_layout.py` cuts a 100,000-byte value at the first 40 bytes and then every 997 bytes; every-byte cuts are done for small transactions. | A 1 MB value is also hard-killed in `tests/test_crash.py` and in the `large-values` torture mode. |
 | 8 | **The E5 failure-after-swap path** is tested with injected errors only, not a real disk error. | `DatabaseFailed` there means the write may be present. |
-| 9 | **The Wi-Fi-off check of the final code is not done yet.** | Run `sh tools/final_check.sh` with Wi-Fi off. |
 
 ---
 
@@ -931,5 +946,6 @@ We list what we did **not** prove, so nobody has to find it for us. More in [`BR
 | [`docs/breaking-long-form.md`](docs/breaking-long-form.md) | the long version of BREAKING.md |
 | [`docs/self-audit.md`](docs/self-audit.md) | documents checked against the code |
 | [`docs/clarifications.md`](docs/clarifications.md) | official clarifications from the judges |
-| [`evidence/final/final-check-20261107-073908.txt`](evidence/final/final-check-20261107-073908.txt) | the final check: fresh clone, tests, every torture mode |
+| [`evidence/final/final-check-20261107-085043.txt`](evidence/final/final-check-20261107-085043.txt) | the final check with Wi-Fi off: fresh clone of `105d945`, tests, every torture mode |
+| [`evidence/final/final-check-20261107-073908.txt`](evidence/final/final-check-20261107-073908.txt) | the same check with the network on |
 | [`evidence/no-cache-timing.txt`](evidence/no-cache-timing.txt), [`evidence/recovery-worst-case.txt`](evidence/recovery-worst-case.txt) | the 1,000,000-key recovery timings for the current code |

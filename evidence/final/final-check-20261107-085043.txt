@@ -1,0 +1,146 @@
+# Final check (final fix round): fresh clone, build, tests, torture with new seeds
+# Command: sh tools/final_check.sh
+# Started 2026-11-07 08:50:43 IST | macOS 15.8.1 | x86_64 | Python 3.13.9
+
+--- 1. network check (must NOT reach github.com):
+github.com not reachable: the network is off.
+
+--- 2. git clone of the local repository into /Users/apple/Documents/Hackathons/srinathon 3.0/outcome/final-check-clone-20261107-085043
+cloned commit: 105d945edc0baee6d09bdc74fcfa59fec8bb3a57
+files in the clone: 134
+
+--- $ python3 -m compileall -q .
+exit=0  wall=0.4 s
+
+--- $ python3 tools/check_imports.py
+OK
+exit=0  wall=0.2 s
+
+--- $ python3 -m unittest discover -s tests
+/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/unittest/case.py:606: ResourceWarning: unclosed file <_io.TextIOWrapper name='/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/final-check-clone-20261107-085043/.torture-work/test-07o3bk60/o1.log' mode='a' encoding='utf-8'>
+  if method() is not None:
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/unittest/case.py:606: ResourceWarning: unclosed file <_io.TextIOWrapper name='/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/final-check-clone-20261107-085043/.torture-work/test-rw_siopd/oracle.log' mode='a' encoding='utf-8'>
+  if method() is not None:
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/unittest/case.py:606: ResourceWarning: unclosed file <_io.TextIOWrapper name='/Users/apple/Documents/Hackathons/srinathon 3.0/outcome/final-check-clone-20261107-085043/.torture-work/test-rw_siopd/o2.log' mode='a' encoding='utf-8'>
+  if method() is not None:
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+.........................
+----------------------------------------------------------------------
+Ran 126 tests in 27.071s
+
+OK
+exit=0  wall=27.3 s
+
+--- $ ./torture --iterations 500 --seed 811001
+torture: mode default seed 811001 iterations 500 writers 3 kvdb kvdb.py
+fresh database every 25 iterations
+safety: PASS 500/500 (no broken promise found)
+kills with at least one request in flight: 500/500 (100.0%)
+average iteration 0.58 s; projected 200 iterations: 116 s
+time per iteration by phase: random kill delay (writes in flight) 203 ms, kvdb.py open 124 ms, kvdb.py check + dump (together) 119 ms, serve start until READY 108 ms, kill + drain + join writers 23 ms, copy of the database (failure evidence) 3 ms, oracle comparison 0 ms
+coverage: 261460 ACKs (minimum 1000); ACKed by type: put 130804, del 52426, batch 78230
+RESULT: PASS
+exit=0  wall=291.6 s
+
+--- $ ./torture --iterations 200 --seed 811002
+torture: mode default seed 811002 iterations 200 writers 3 kvdb kvdb.py
+fresh database every 25 iterations
+safety: PASS 200/200 (no broken promise found)
+kills with at least one request in flight: 200/200 (100.0%)
+average iteration 0.59 s; projected 200 iterations: 119 s
+time per iteration by phase: random kill delay (writes in flight) 221 ms, kvdb.py open 122 ms, kvdb.py check + dump (together) 118 ms, serve start until READY 106 ms, kill + drain + join writers 23 ms, copy of the database (failure evidence) 3 ms, oracle comparison 0 ms
+coverage: 115126 ACKs (minimum 400); ACKed by type: put 57525, del 22872, batch 34729
+RESULT: PASS
+exit=0  wall=119.2 s
+
+--- $ ./torture --iterations 100 --seed 811003 --mode large-values
+torture: mode large-values seed 811003 iterations 100 writers 3 kvdb kvdb.py
+fresh database every 5 iterations
+safety: PASS 100/100 (no broken promise found)
+kills with at least one request in flight: 100/100 (100.0%)
+average iteration 1.08 s; projected 200 iterations: 216 s
+time per iteration by phase: random kill delay (writes in flight) 310 ms, kvdb.py check + dump (together) 239 ms, kvdb.py open 204 ms, serve start until READY 126 ms, copy of the database (failure evidence) 84 ms, kill + drain + join writers 17 ms, oracle comparison 4 ms
+coverage: 8243 ACKs (minimum 200); ACKed by type: put 4129, del 1641, batch 2473
+RESULT: PASS
+exit=0  wall=108.2 s
+
+--- $ ./torture --iterations 100 --seed 811004 --mode compaction
+torture: mode compaction seed 811004 iterations 100 writers 3 kvdb kvdb.py
+one database for the whole run
+safety: PASS 100/100 (no broken promise found)
+kills with at least one request in flight: 100/100 (100.0%)
+kills that landed DURING a compaction: 84/100
+average iteration 0.73 s; projected 200 iterations: 146 s
+time per iteration by phase: random kill delay (writes in flight) 410 ms, kvdb.py check + dump (together) 107 ms, kvdb.py open 98 ms, serve start until READY 82 ms, kill + drain + join writers 24 ms, copy of the database (failure evidence) 3 ms, oracle comparison 1 ms
+coverage: 5336 ACKs (minimum 200); ACKed by type: put 2154, del 699, batch 1905, compact 578
+RESULT: PASS
+exit=0  wall=73.3 s
+
+--- $ ./torture --iterations 100 --seed 811005 --mode recovery-crash
+torture: mode recovery-crash seed 811005 iterations 100 writers 3 kvdb kvdb.py
+one database for the whole run
+prefilled 100,000 keys through serve (writer 0, ACKed batches)
+safety: PASS 100/100 (no broken promise found)
+kills with at least one request in flight: 100/100 (100.0%)
+extra kills of a restarted serve: 0 before Python started main, 286 DURING recovery, 14 after READY
+average iteration 1.99 s; projected 200 iterations: 399 s
+time per iteration by phase: kvdb.py check + dump (together) 621 ms, kvdb.py open 248 ms, serve start until READY 236 ms, random kill delay (writes in flight) 196 ms, oracle comparison 63 ms, kill + drain + join writers 23 ms, copy of the database (failure evidence) 7 ms
+coverage: 51773 ACKs (minimum 200); ACKed by type: put 25910, del 10449, batch 15414
+RESULT: PASS
+exit=0  wall=201.1 s
+
+--- $ ./torture --iterations 100 --seed 811006 --mode large-batches
+torture: mode large-batches seed 811006 iterations 100 writers 3 kvdb kvdb.py
+fresh database every 10 iterations
+safety: PASS 100/100 (no broken promise found)
+kills with at least one request in flight: 100/100 (100.0%)
+average iteration 1.07 s; projected 200 iterations: 214 s
+time per iteration by phase: random kill delay (writes in flight) 422 ms, kvdb.py open 211 ms, kvdb.py check + dump (together) 205 ms, serve start until READY 174 ms, kill + drain + join writers 22 ms, copy of the database (failure evidence) 7 ms, oracle comparison 5 ms
+coverage: 772 ACKs (minimum 200); ACKed by type: put 168, del 94, batch 510
+RESULT: PASS
+exit=0  wall=107.4 s
+
+--- $ ./torture --iterations 100 --seed 811007 --mode disk-full
+torture: mode disk-full seed 811007 iterations 100 writers 3 kvdb kvdb.py
+one database for the whole run
+created the database with --max-bytes 4096: keys=0 recovery_ms=1 bytes_cut=0 trailer_restored=no
+safety: PASS 100/100 (no broken promise found)
+kills with at least one request in flight: 100/100 (100.0%)
+ERR replies by reason: SizeCapReached 388
+average iteration 0.53 s; projected 200 iterations: 106 s
+time per iteration by phase: random kill delay (writes in flight) 220 ms, kvdb.py open 96 ms, kvdb.py check + dump (together) 94 ms, serve start until READY 80 ms, kill + drain + join writers 36 ms, copy of the database (failure evidence) 2 ms, oracle comparison 0 ms
+coverage: 1534 ACKs (minimum 200); ACKed by type: put 742, del 413, batch 379
+RESULT: PASS
+exit=0  wall=53.3 s
+
+--- $ ./torture --iterations 100 --seed 811008 --mode overlap
+torture: mode overlap seed 811008 iterations 100 writers 3 kvdb kvdb.py
+fresh database every 25 iterations
+safety: PASS 100/100 (no broken promise found)
+kills with at least one request in flight: 100/100 (100.0%)
+average iteration 0.56 s; projected 200 iterations: 113 s
+time per iteration by phase: random kill delay (writes in flight) 217 ms, kvdb.py open 111 ms, kvdb.py check + dump (together) 105 ms, serve start until READY 94 ms, kill + drain + join writers 27 ms, oracle comparison 5 ms, copy of the database (failure evidence) 2 ms
+coverage: 68182 ACKs (minimum 200); ACKed by type: put 47682, del 20500
+RESULT: PASS
+exit=0  wall=56.6 s
+
+--- $ ./torture --iterations 3 --seed 811009 --mode targeted
+round 3 write.after-marker         PASS       unanswered w1-10 -> applied
+round 3 write.after-commit-sync    PASS       unanswered w1-13 -> applied
+round 3 write.after-index          PASS       unanswered w1-9 -> applied
+round 3 recovery.replay            PASS       unanswered w1-6 -> absent
+round 3 recovery.before-cut        PASS       unanswered w1-10 -> absent
+round 3 recovery.after-cut         PASS       unanswered w1-21 -> absent
+round 3 recovery.before-trailer    PASS       no write in flight; all ACKed data intact
+round 3 compact.mid-write          PASS       no write in flight; all ACKed data intact
+round 3 compact.before-swap        PASS       no write in flight; all ACKed data intact
+round 3 compact.after-swap         PASS       no write in flight; all ACKed data intact
+round 3 compact.before-cleanup     PASS       no write in flight; all ACKed data intact
+round 3 close                      PASS       no write in flight; all ACKed data intact
+coverage: 17 of 17 intended pause points hit and killed in every round
+TARGETED PASS 51/51 (not tested: none)
+exit=0  wall=18.9 s
+
+# Finished 2026-11-07 09:08:22 IST
