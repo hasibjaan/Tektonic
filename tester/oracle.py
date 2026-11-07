@@ -279,3 +279,53 @@ class OverlapOracle:
             self.pending = {w: None for w in self.pending}
             self.note("PASS")
         return problems
+
+
+# ---- saving and loading the oracle's expected state (failure evidence, --replay) ----
+# Plain JSON with bytes as hex; no pickle. Used by tester/modes.py save_failure and
+# run_replay: a replay judges a saved database against EXACTLY these expected states.
+
+def _hex(b):
+    return None if b is None else b.hex()
+
+
+def _unhex(s):
+    return None if s is None else bytes.fromhex(s)
+
+
+def oracle_to_json(oracle):
+    with oracle.lock:
+        if isinstance(oracle, OverlapOracle):
+            return {"kind": "overlap", "keys": sorted(k.hex() for k in oracle.all_keys),
+                    "writers": sorted(oracle.models), "clock": oracle.clock,
+                    "state": {k.hex(): v.hex() for k, v in oracle.state.items()},
+                    "pending": {str(w): r for w, r in oracle.pending.items()},
+                    "ops": {rid: {"kind": o["kind"], "key": o["key"].hex(), "value": _hex(o["value"]),
+                                  "sent": o["sent"], "acked": o["acked"], "err": o["err"]}
+                            for rid, o in oracle.ops.items()}}
+        return {"kind": "writers", "models": {
+            str(w): {"keys": sorted(k.hex() for k in m.keys),
+                     "state": {k.hex(): v.hex() for k, v in m.state.items()},
+                     "last_op": {k.hex(): r for k, r in m.last_op.items()},
+                     "pending": None if m.pending is None else
+                     {"rid": m.pending[0], "effects": [[kind, k.hex(), _hex(v)] for kind, k, v in m.pending[1]]}}
+            for w, m in oracle.models.items()}}
+
+
+def oracle_from_json(data, log_path):
+    if data["kind"] == "overlap":
+        o = OverlapOracle(log_path, data["writers"], [bytes.fromhex(k) for k in data["keys"]])
+        o.clock = data["clock"]
+        o.state = {bytes.fromhex(k): bytes.fromhex(v) for k, v in data["state"].items()}
+        o.pending = {int(w): r for w, r in data["pending"].items()}
+        o.ops = {rid: {"rid": rid, "kind": d["kind"], "key": bytes.fromhex(d["key"]), "value": _unhex(d["value"]),
+                       "sent": d["sent"], "acked": d["acked"], "err": d["err"]} for rid, d in data["ops"].items()}
+        return o
+    o = Oracle(log_path, {int(w): [bytes.fromhex(k) for k in d["keys"]] for w, d in data["models"].items()})
+    for w, d in data["models"].items():
+        m = o.models[int(w)]
+        m.state = {bytes.fromhex(k): bytes.fromhex(v) for k, v in d["state"].items()}
+        m.last_op = {bytes.fromhex(k): r for k, r in d["last_op"].items()}
+        if d["pending"] is not None:
+            m.pending = (d["pending"]["rid"], [(kind, bytes.fromhex(k), _unhex(v)) for kind, k, v in d["pending"]["effects"]])
+    return o

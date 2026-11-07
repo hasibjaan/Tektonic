@@ -5,7 +5,10 @@ section 14). This package never imports the engine (tools/check_imports.py
 proves it).
 """
 import collections
+import hashlib
+import json
 import os
+import platform
 import queue
 import random
 import re
@@ -16,8 +19,8 @@ import threading
 import time
 import traceback
 
-from tester.oracle import Oracle, short
-from tester.workload import PROFILES, Profile, Writer, next_request, writer_keys
+from tester.oracle import Oracle, oracle_from_json, oracle_to_json, short
+from tester.workload import PROFILES, EventLog, Profile, Writer, next_request, writer_keys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAUSE_POINTS = [                                        # CLAUDE.md section 13, in order
@@ -224,13 +227,21 @@ class Run:
         self.trace_lock = threading.Lock()
         self.failures_dir = os.path.abspath(args.failures_dir)
         self.protocol_errors = []
+        self.engine_commit = engine_commit(self.kvdb)
+        self.engine_sha = engine_files_sha256(self.kvdb)
 
     def trace(self, text):
         with self.trace_lock:
             self.trace_file.write("{:.3f} {}\n".format(time.monotonic(), text))
             self.trace_file.flush()
 
-    def save_failure(self, iteration, problems, db_after_kill, db, oracle_log):
+    def save_failure(self, iteration, problems, db_after_kill, db, oracle_log, oracle=None, events=None,
+                     side_files=(), kill=None):
+        """Everything needed to look at, and replay, the failure (Fix 7):
+        db-after-kill.kv and every side file as they were BEFORE recovery, the
+        database after open, the oracle log and its expected state (oracle-state.json,
+        for --replay), this iteration's full requests and replies (events.log), the
+        trace, and meta.json (engine commit, Python, OS, mode, seed, kill details)."""
         folder = os.path.join(self.failures_dir, "seed-{}-iter-{}".format(self.seed, iteration))
         shutil.rmtree(folder, ignore_errors=True)
         os.makedirs(folder)
@@ -238,23 +249,165 @@ class Run:
                           (oracle_log, "oracle.log"), (os.path.join(self.dir, "trace.log"), "trace.log")):
             if src and os.path.exists(src):
                 shutil.copyfile(src, os.path.join(folder, name))
+        for src in side_files:                            # e.g. db.kv.compact.tmp.after-kill
+            shutil.copyfile(src, os.path.join(folder, os.path.basename(src)))
+        if events is not None:
+            with open(os.path.join(folder, "events.log"), "wb") as f:
+                for t, kind, data in events.snapshot():
+                    f.write(b"%.6f %s " % (t, kind) + data)
+        if oracle is not None:
+            with open(os.path.join(folder, "oracle-state.json"), "w", encoding="utf-8") as f:
+                json.dump(oracle_to_json(oracle), f)
+        meta = {"seed": self.seed, "iteration": iteration, "mode": self.args.mode,
+                "command": "python3 torture.py " + " ".join(sys.argv[1:]),
+                "engine": os.path.relpath(self.kvdb, REPO), "engine_commit": self.engine_commit,
+                "engine_files_sha256": self.engine_sha,
+                "python": platform.python_version(), "platform": platform.platform(),
+                "kill": kill or {}, "problems": problems,
+                "note": "The seed repeats every random choice (keys, values, batches, kill delays) "
+                        "but not the exact thread timing. Use --replay on this folder to judge the "
+                        "saved database again."}
+        with open(os.path.join(folder, "meta.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=1)
         with open(os.path.join(folder, "report.txt"), "w", encoding="utf-8") as f:
             f.write("seed {} iteration {} mode {}\n".format(self.seed, iteration, self.args.mode))
-            f.write("command: python3 torture.py {}\n".format(" ".join(sys.argv[1:])))
+            f.write("command: {}\n".format(meta["command"]))
+            f.write("engine commit: {}; engine files sha256 {}; Python {}; {}\n".format(
+                self.engine_commit, self.engine_sha, meta["python"], meta["platform"]))
+            f.write("kill: {}\n".format(json.dumps(meta["kill"])))
+            f.write("replay: python3 torture.py --replay {}\n".format(os.path.relpath(folder, REPO)))
             f.write("\n".join(problems) + "\n")
         return folder
 
 
-def fail(run, iteration, problems, db_after_kill, db, oracle_log):
+def fail(run, iteration, problems, db_after_kill, db, oracle_log, **evidence):
     print("FAIL at iteration {} (seed {}, mode {}):".format(iteration, run.seed, run.args.mode))
     for p in problems:
         print("  " + p)
-    folder = run.save_failure(iteration, problems, db_after_kill, db, oracle_log)
+    folder = run.save_failure(iteration, problems, db_after_kill, db, oracle_log, **evidence)
     print("saved: {}".format(os.path.relpath(folder, REPO)))
+    print("replay: python3 torture.py --replay {}".format(os.path.relpath(folder, REPO)))
     return 1
 
 
-def make_dispatch(oracle, writers_by_id, run, allowed_errors=()):
+def copy_before_recovery(folder, db):
+    """Copy the data file and every file next to it (e.g. db.kv.compact.tmp), as the
+    kill left them, BEFORE open repairs anything. Returns (data copy or None, [side copies]).
+    The lock file is skipped: it is always empty and the kernel lock is not a file content."""
+    after_kill = os.path.join(folder, "db-after-kill.kv")
+    if os.path.exists(db):
+        shutil.copyfile(db, after_kill)
+    else:
+        after_kill = None
+    base = os.path.basename(db) + "."
+    side_files = []
+    for name in sorted(os.listdir(folder)):
+        if name.startswith(base) and name != base + "lock" and not name.endswith(".after-kill"):
+            copy = os.path.join(folder, name + ".after-kill")
+            shutil.copyfile(os.path.join(folder, name), copy)
+            side_files.append(copy)
+    return after_kill, side_files
+
+
+def run_replay(args):
+    """torture --replay <failure folder> (Fix 7): put the saved files back exactly as the
+    kill left them (db-after-kill.kv, db.kv.*.after-kill), run the same open / check /
+    dump --hex read-back, and judge the result against the SAVED oracle state
+    (oracle-state.json). Exit 1 if the failure reproduces, 0 if it does not.
+    It cannot repeat thread timing or the recovery-crash restart kills; it replays the
+    files the kill produced, which is what recovery sees."""
+    folder = os.path.abspath(args.replay)
+    try:
+        with open(os.path.join(folder, "meta.json"), encoding="utf-8") as f:
+            meta = json.load(f)
+        with open(os.path.join(folder, "oracle-state.json"), encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError) as exc:
+        print("replay: cannot read the failure folder: {}".format(exc), file=sys.stderr)
+        return 2
+    work = os.path.join(safe_workdir(args.workdir), "replay-" + os.path.basename(folder))
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work)
+    db = os.path.join(work, "db.kv")
+    restored = []
+    for name in sorted(os.listdir(folder)):
+        if name == "db-after-kill.kv":
+            shutil.copyfile(os.path.join(folder, name), db)
+            restored.append("db.kv")
+        elif name.startswith("db.kv.") and name.endswith(".after-kill"):
+            shutil.copyfile(os.path.join(folder, name), os.path.join(work, name[:-len(".after-kill")]))
+            restored.append(name[:-len(".after-kill")])
+    oracle_log = os.path.join(work, "oracle.log")
+    oracle = oracle_from_json(state, oracle_log)
+    kvdb = os.path.abspath(args.kvdb)
+    print("replay: {} (saved: mode {} seed {} iteration {}, engine {} files {})".format(
+        os.path.relpath(folder, REPO), meta.get("mode"), meta.get("seed"), meta.get("iteration"),
+        meta.get("engine_commit"), meta.get("engine_files_sha256")))
+    now = engine_files_sha256(kvdb)
+    print("replay: engine now {} files {}{}; files restored: {}".format(
+        engine_commit(kvdb), now, "" if now == meta.get("engine_files_sha256") else " (A DIFFERENT ENGINE)",
+        ", ".join(restored) or "none"))
+    print("replay: the saved problems were:")
+    for p in meta.get("problems", []):
+        print("  " + p)
+    if (meta.get("kill") or {}).get("restart_kills"):
+        print("replay: note: the recovery-crash restart kills are NOT repeated; recovery runs once")
+    pending = None
+    if state["kind"] == "writers" and 1 in oracle.models:
+        pending = oracle.models[1].pending
+    dump, problem = read_back(kvdb, db)
+    problems = [problem] if problem else oracle.verify(dump)
+    profile = PROFILES.get(meta.get("mode"))
+    if not problems and profile is not None and profile.max_bytes and os.path.getsize(db) > profile.max_bytes:
+        problems = ["file is {} bytes, over max_bytes {}".format(os.path.getsize(db), profile.max_bytes)]
+    point = (meta.get("kill") or {}).get("pause_point")
+    if not problems and point and pending is not None and TARGET_EXPECT.get(point) == "applied":
+        oracle.log.flush()
+        with open(oracle_log, encoding="utf-8") as f:
+            if "DECIDED {} applied".format(pending[0]) not in f.read():
+                problems = ["{}: request {} must be present (scenario A4) but is absent".format(point, pending[0])]
+    if problems:
+        print("REPRODUCED: the saved files fail again:")
+        for p in problems:
+            print("  " + p)
+        return 1
+    print("NOT REPRODUCED: the saved files pass now (keys {}). If the saved problem was a "
+          "protocol or thread error, it depends on timing and a file replay cannot show it.".format(len(dump)))
+    return 0
+
+
+def engine_files_sha256(kvdb):
+    """SHA-256 over the engine's own files (kvdb.py and every src/kv/*.py next to it, in
+    name order): tells two engines apart even when they sit in the same git commit."""
+    folder = os.path.dirname(os.path.abspath(kvdb))
+    paths = [os.path.abspath(kvdb)]
+    pkg = os.path.join(folder, "src", "kv")
+    if os.path.isdir(pkg):
+        paths += [os.path.join(pkg, n) for n in sorted(os.listdir(pkg)) if n.endswith(".py")]
+    h = hashlib.sha256()
+    for p in paths:
+        h.update(os.path.relpath(p, folder).encode() + b"\0")
+        with open(p, "rb") as f:
+            h.update(f.read())
+    return h.hexdigest()[:16]
+
+
+def engine_commit(kvdb):
+    """The git commit of the folder holding the engine (and whether it has changes)."""
+    folder = os.path.dirname(os.path.abspath(kvdb))
+    try:
+        head = subprocess.run(["git", "-C", folder, "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True, timeout=30)
+        dirty = subprocess.run(["git", "-C", folder, "status", "--porcelain", "--untracked-files=no"],
+                               capture_output=True, text=True, timeout=30)
+        if head.returncode != 0:
+            return "unknown (not a git folder)"
+        return head.stdout.strip() + (" + uncommitted changes" if dirty.stdout.strip() else "")
+    except (OSError, subprocess.SubprocessError):
+        return "unknown (git not available)"
+
+
+def make_dispatch(oracle, writers_by_id, run, allowed_errors=(), events=None):
     """Replies from serve's stdout -> the oracle.
 
     Every line must parse with parse_reply and name a request that is in flight;
@@ -263,6 +416,8 @@ def make_dispatch(oracle, writers_by_id, run, allowed_errors=()):
     The writer is released only after a reply that was fully understood."""
     def dispatch(line):
         run.trace("RECV {}".format(line[:200]))
+        if events is not None:
+            events.recv(line)
         try:
             kind, rid, wid, rest = parse_reply(line)
         except ProtocolError as exc:
@@ -372,10 +527,11 @@ def run_random(args):
         rngs = {w: random.Random(master.getrandbits(64)) for w in seqs}
         restarts = [master.uniform(*profile.restart_ms) for _ in range(profile.restart_kills)]
         writers_by_id = {}
+        events = EventLog()                               # this iteration's requests and replies
         stop = threading.Event()
         oracle.note("ITERATION {} kill_delay_ms {:.1f}".format(it, delay))
         mark = time.perf_counter()
-        child = Child(run.kvdb, db, make_dispatch(oracle, writers_by_id, run, profile.allowed_errors))
+        child = Child(run.kvdb, db, make_dispatch(oracle, writers_by_id, run, profile.allowed_errors, events))
         try:
             child.wait_stderr("READY")
         except ChildGone as exc:
@@ -383,7 +539,7 @@ def run_random(args):
             return fail(run, it, ["serve did not start: {}".format(exc)], None, db, oracle_log)
         for w in seqs:
             writers_by_id[w] = Writer(w, rngs[w], profile, oracle, child, stop, it, seqs[w], run.trace,
-                                      kinds=run.sent_kinds)
+                                      kinds=run.sent_kinds, events=events)
         cost["serve start until READY"] += time.perf_counter() - mark
         for wr in writers_by_id.values():
             wr.start()
@@ -404,11 +560,8 @@ def run_random(args):
         with_inflight += in_flight > 0
         run.trace("KILL iteration {} exit {} in_flight {} compacting {}".format(it, code, in_flight, compacting))
         mark = time.perf_counter()
-        after_kill = os.path.join(run.dir, "db-after-kill.kv")
-        if os.path.exists(db):                            # a broken engine may never create the file
-            shutil.copyfile(db, after_kill)
-        else:
-            after_kill = None
+        after_kill, side_files = copy_before_recovery(run.dir, db)
+        if after_kill is None:                            # a broken engine may never create the file
             run.trace("no database file after the kill")
         cost["copy of the database (failure evidence)"] += time.perf_counter() - mark
         extra = ""
@@ -440,7 +593,11 @@ def run_random(args):
         if code != -9 and os.name != "nt":
             problems = problems or ["the child was not killed by SIGKILL (exit {})".format(code)]
         if problems:
-            return fail(run, it, problems, after_kill, db, oracle_log)
+            kill = {"kill_delay_ms": round(delay, 1), "requests_in_flight": in_flight,
+                    "killed_during_compaction": compacting, "serve_exit_code": code,
+                    "restart_kills": extra.split(), "fresh_every": profile.fresh_every}
+            return fail(run, it, problems, after_kill, db, oracle_log, oracle=oracle, events=events,
+                        side_files=side_files, kill=kill)
         passes += 1
     avg = sum(times) / len(times)
     print("safety: PASS {}/{} (no broken promise found)".format(passes, args.iterations))
@@ -632,6 +789,7 @@ def targeted_one(run, profile, point, rng, rnd):
         return "FAIL", "pause point not reached: {}".format(exc)
 
     pending = oracle.models[1].pending
+    after_kill, side_files = copy_before_recovery(folder, db)
     dump, problem = read_back(run.kvdb, db)
     problems = list(run.protocol_errors) or ([problem] if problem else oracle.verify(dump))
     applied = None
@@ -645,7 +803,8 @@ def targeted_one(run, profile, point, rng, rnd):
         print("FAIL {} round {}:".format(point, rnd))
         for p in problems:
             print("  " + p)
-        saved = run.save_failure("targeted-{}-{}".format(rnd, point), problems, None, db, oracle_log)
+        saved = run.save_failure("targeted-{}-{}".format(rnd, point), problems, after_kill, db, oracle_log,
+                                 oracle=oracle, side_files=side_files, kill={"pause_point": point, "round": rnd})
         print("saved: {}".format(os.path.relpath(saved, REPO)))
         return "FAIL", ""
     if pending is None:

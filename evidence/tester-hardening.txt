@@ -125,3 +125,352 @@ average iteration 0.39 s; projected 200 iterations: 79 s
 coverage: 0 ACKs (minimum 20); ACKed by type: put 0, del 0, batch 0
 INCONCLUSIVE: the safety checks passed, but the run did not test enough (only 0 ACKs; never ACKed: put, del, batch).
 exit=3
+
+===== Fix 7: failure evidence and --replay (captured 2026-11-07 07:30:15 IST, commit base 8a90082 + uncommitted Fix 7) =====
+$ FAKE_KVDB_MODE=ack python3 torture.py --iterations 3 --seed 16 --kvdb tester/fake_kvdb.py --failures-dir .torture-work/fix7-demo-failures
+    key w3k6: expected w3.s360.o6.i1.80f798c8bd06a12d27be0ee0f4 but found <absent>  (operation ids: w3-360, w3-370)
+    key w3k7: expected w3.s352.o3.i1.03b7b8 but found <absent>  (operation ids: w3-352, w3-370)
+    key w3k8: expected w3.s365.o0.i1.ccef1111875c28b8119b706fb6 but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k9: expected w3.s365.o3.i1.1c08e43083fc6eaec4aca08c176d41e696604cb but found <absent>  (operation ids: w3-365, w3-370)
+saved: .torture-work/fix7-demo-failures/seed-16-iter-1
+replay: python3 torture.py --replay .torture-work/fix7-demo-failures/seed-16-iter-1
+exit 1
+$ ls -l .torture-work/fix7-demo-failures/seed-16-iter-1
+167953 events.log
+5752 meta.json
+6065 oracle-state.json
+36004 oracle.log
+5311 report.txt
+76394 trace.log
+$ cat meta.json
+{
+ "seed": 16,
+ "iteration": 1,
+ "mode": "default",
+ "command": "python3 torture.py --iterations 3 --seed 16 --kvdb tester/fake_kvdb.py --failures-dir .torture-work/fix7-demo-failures",
+ "engine": "tester/fake_kvdb.py",
+ "engine_commit": "8a90082 + uncommitted changes",
+ "python": "3.13.9",
+ "platform": "macOS-15.8.1-x86_64-i386-64bit-Mach-O",
+ "kill": {
+  "kill_delay_ms": 151.0,
+  "requests_in_flight": 3,
+  "killed_during_compaction": false,
+  "serve_exit_code": -9,
+  "restart_kills": [],
+  "fresh_every": 25
+ },
+ "problems": [
+  "writer 1: the dump matches none of the 2 allowed state(s)",
+  "  unanswered request: w1-371 (allowed: fully applied or fully absent)",
+  "  key w1k0: expected w1.s363.o3.i1.d84b71c554b3670763bb2f74f54d55 or w1.s371.o2.i1.391ab9c9cb994af331c2e9d93 but found <absent>  (operation ids: w1-363, w1-371)",
+  "  key w1k1: expected w1.s370.o6.i1.9a99caff but found <absent>  (operation ids: w1-370, w1-371)",
+  "  key w1k10: expected w1.s368.o3.i1.2b93d488 but found <absent>  (operation ids: w1-368, w1-371)",
+  "  key w1k12: expected w1.s366.o0.i1.3d2a8fb9c2 or w1.s371.o7.i1.7d but found <absent>  (operation ids: w1-366, w1-371)",
+  "  key w1k13: expected w1.s365.o4.i1.b51e8345384c49062ca7f5f4225a5 or w1.s371.o0.i1.d0bd222de2d5cd but found <absent>  (operation ids: w1-365, w1-371)",
+  "  key w1k14: expected w1.s368.o5.i1.2a778a49098f1662f97e8bf2fb4c55356bc or w1.s371.o1.i1.75bdad057a41b7a2792a3e7dbc5b4 but found <absent>  (operation ids: w1-368, w1-371)",
+  "  key w1k15: expected w1.s370.o3.i1.327b1ef30f51e80ee3c338042 but found <absent>  (operation ids: w1-370, w1-371)",
+  "  key w1k2: expected w1.s363.o8.i1.a62885841b42ca748a4c56eb or w1.s371.o5.i1. but found <absent>  (operation ids: w1-363, w1-371)",
+  "  key w1k3: expected w1.s368.o4.i1.301631dacc544 but found <absent>  (operation ids: w1-368, w1-371)",
+  "  key w1k4: expected w1.s368.o8.i1.5fff or w1.s371.o6.i1.8df23d09758fc6a but found <absent>  (operation ids: w1-368, w1-371)",
+  "  key w1k5: expected w1.s370.o5.i1.cd251cb3 or w1.s371.o3.i1.99cbeba87e2c1f63959 but found <absent>  (operation ids: w1-370, w1-371)",
+  "  key w1k7: expected w1.s368.o2.i1.3c98131b12c73a803b3 but found <absent>  (operation ids: w1-368, w1-371)",
+  "  key w1k8: expected w1.s368.o1.i1.5012ab798e3c547c4df8dc488346 but found <absent>  (operation ids: w1-368, w1-371)",
+  "  key w1k9: expected w1.s370.o7.i1.070e564667632d9116ed6 or w1.s371.o4.i1.189c7e80 but found <absent>  (operation ids: w1-370, w1-371)",
+  "writer 2: the dump matches none of the 2 allowed state(s)",
+  "  unanswered request: w2-371 (allowed: fully applied or fully absent)",
+  "  key w2k0: expected w2.s367.o7.i1.1a6776af2aed29686 but found <absent>  (operation ids: w2-367, w2-371)",
+  "  key w2k1: expected w2.s366.o0.i1. or w2.s371.o0.i1.fc7ce7977b24e8e43702cd748b3d but found <absent>  (operation ids: w2-366, w2-371)",
+  "  key w2k11: expected w2.s366.o1.i1.2fb2dd6a8b4a32a1824053fe5eb06 but found <absent>  (operation ids: w2-366, w2-371)",
+  "  key w2k12: expected w2.s356.o0.i1.0b4d6bda194737462559d9b6f8d7180 but found <absent>  (operation ids: w2-356, w2-371)",
+  "  key w2k14: expected w2.s368.o3.i1.5727d81dfb66c799ed0497f but found <absent>  (operation ids: w2-368, w2-371)",
+  "  key w2k15: expected w2.s367.o4.i1.75472ad45002f1c52d7a8cfffa92f but found <absent>  (operation ids: w2-367, w2-371)",
+  "  key w2k2: expected w2.s368.o2.i1.35564c595be24d2431cf8edb but found <absent>  (operation ids: w2-368, w2-371)",
+  "  key w2k3: expected w2.s366.o3.i1.87affc0e3df509 but found <absent>  (operation ids: w2-366, w2-371)",
+  "  key w2k5: expected w2.s367.o6.i1.a542f79f3199ad737b67f546 but found <absent>  (operation ids: w2-367, w2-371)",
+  "  key w2k6: expected w2.s367.o3.i1.8e09a4d04637ed19f4469f94bfc84a6a but found <absent>  (operation ids: w2-367, w2-371)",
+  "  key w2k8: expected w2.s343.o2.i1.31a6c197b but found <absent>  (operation ids: w2-343, w2-371)",
+  "  key w2k9: expected w2.s368.o0.i1.9c6355457 but found <absent>  (operation ids: w2-368, w2-371)",
+  "writer 3: the dump matches none of the 2 allowed state(s)",
+  "  unanswered request: w3-370 (allowed: fully applied or fully absent)",
+  "  key w3k0: expected w3.s366.o0.i1.3a3eaad06e5e but found <absent>  (operation ids: w3-366, w3-370)",
+  "  key w3k10: expected w3.s361.o0.i1.acd579a1ec but found <absent>  (operation ids: w3-361, w3-370)",
+  "  key w3k13: expected w3.s365.o7.i1.1754edcc1c721af8e8d74ac22e168f but found <absent>  (operation ids: w3-365, w3-370)",
+  "  key w3k14: expected w3.s362.o0.i1.3dde4be40a61973c1c2a64d9 but found <absent>  (operation ids: w3-362, w3-370)",
+  "  key w3k15: expected w3.s368.o0.i1.af79a9274d1edf644106 but found <absent>  (operation ids: w3-368, w3-370)",
+  "  key w3k2: expected w3.s360.o4.i1.e540868ff3903bfe4805db2449f731293e95b but found <absent>  (operation ids: w3-360, w3-370)",
+  "  key w3k4: expected w3.s365.o6.i1.1e123f8 but found <absent>  (operation ids: w3-365, w3-370)",
+  "  key w3k5: expected w3.s357.o1.i1.0cc65a1aa5788f15d9fbb6a5614d86 but found <absent>  (operation ids: w3-357, w3-370)",
+  "  key w3k6: expected w3.s360.o6.i1.80f798c8bd06a12d27be0ee0f4 but found <absent>  (operation ids: w3-360, w3-370)",
+  "  key w3k7: expected w3.s352.o3.i1.03b7b8 but found <absent>  (operation ids: w3-352, w3-370)",
+  "  key w3k8: expected w3.s365.o0.i1.ccef1111875c28b8119b706fb6 but found <absent>  (operation ids: w3-365, w3-370)",
+  "  key w3k9: expected w3.s365.o3.i1.1c08e43083fc6eaec4aca08c176d41e696604cb but found <absent>  (operation ids: w3-365, w3-370)"
+ ],
+ "note": "The seed repeats every random choice (keys, values, batches, kill delays) but not the exact thread timing. Use --replay on this folder to judge the saved database again."
+}
+$ head -c 600 events.log
+50300.891464 SEND w1-1 batch 4
+put w1k14 w1.s1.o0.i1.53e6a9a3e97757928a4a5cc7593cd99fea022
+put w1k7 w1.s1.o1.i1.7d8a34f09fdc98a735be033101457160
+put w1k6 w1.s1.o2.i1.c
+put w1k4 w1.s1.o3.i1.642a6df8c111f09f2097363dafecc0b0c099
+50300.891735 SEND w2-1 put w2k2 w2.s1.o0.i1.38af2e50643e71
+50300.891944 SEND w3-1 put w3k2 w3.s1.o0.i1.07362cfeb5591
+50300.892132 RECV ACK w1-1
+50300.892254 RECV ACK w2-1
+50300.892315 RECV ACK w3-1
+50300.892494 SEND w1-2 batch 3
+del w1k12
+put w1k11 w1.s2.o1.i1.c7740
+del w1k10
+50300.892549 SEND w2-2 put w2k10 w2.s2.o0.i1.89aef1fd61c58e43b6782b172232d51e0a4e13
+50300.892668 
+$ python3 torture.py --replay .torture-work/fix7-demo-failures/seed-16-iter-1 --kvdb tester/fake_kvdb.py
+replay: .torture-work/fix7-demo-failures/seed-16-iter-1 (saved: mode default seed 16 iteration 1, engine 8a90082 + uncommitted changes)
+replay: engine now 8a90082 + uncommitted changes; files restored: none
+replay: the saved problems were:
+  writer 1: the dump matches none of the 2 allowed state(s)
+    unanswered request: w1-371 (allowed: fully applied or fully absent)
+    key w1k0: expected w1.s363.o3.i1.d84b71c554b3670763bb2f74f54d55 or w1.s371.o2.i1.391ab9c9cb994af331c2e9d93 but found <absent>  (operation ids: w1-363, w1-371)
+    key w1k1: expected w1.s370.o6.i1.9a99caff but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k10: expected w1.s368.o3.i1.2b93d488 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k12: expected w1.s366.o0.i1.3d2a8fb9c2 or w1.s371.o7.i1.7d but found <absent>  (operation ids: w1-366, w1-371)
+    key w1k13: expected w1.s365.o4.i1.b51e8345384c49062ca7f5f4225a5 or w1.s371.o0.i1.d0bd222de2d5cd but found <absent>  (operation ids: w1-365, w1-371)
+    key w1k14: expected w1.s368.o5.i1.2a778a49098f1662f97e8bf2fb4c55356bc or w1.s371.o1.i1.75bdad057a41b7a2792a3e7dbc5b4 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k15: expected w1.s370.o3.i1.327b1ef30f51e80ee3c338042 but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k2: expected w1.s363.o8.i1.a62885841b42ca748a4c56eb or w1.s371.o5.i1. but found <absent>  (operation ids: w1-363, w1-371)
+    key w1k3: expected w1.s368.o4.i1.301631dacc544 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k4: expected w1.s368.o8.i1.5fff or w1.s371.o6.i1.8df23d09758fc6a but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k5: expected w1.s370.o5.i1.cd251cb3 or w1.s371.o3.i1.99cbeba87e2c1f63959 but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k7: expected w1.s368.o2.i1.3c98131b12c73a803b3 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k8: expected w1.s368.o1.i1.5012ab798e3c547c4df8dc488346 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k9: expected w1.s370.o7.i1.070e564667632d9116ed6 or w1.s371.o4.i1.189c7e80 but found <absent>  (operation ids: w1-370, w1-371)
+  writer 2: the dump matches none of the 2 allowed state(s)
+    unanswered request: w2-371 (allowed: fully applied or fully absent)
+    key w2k0: expected w2.s367.o7.i1.1a6776af2aed29686 but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k1: expected w2.s366.o0.i1. or w2.s371.o0.i1.fc7ce7977b24e8e43702cd748b3d but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k11: expected w2.s366.o1.i1.2fb2dd6a8b4a32a1824053fe5eb06 but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k12: expected w2.s356.o0.i1.0b4d6bda194737462559d9b6f8d7180 but found <absent>  (operation ids: w2-356, w2-371)
+    key w2k14: expected w2.s368.o3.i1.5727d81dfb66c799ed0497f but found <absent>  (operation ids: w2-368, w2-371)
+    key w2k15: expected w2.s367.o4.i1.75472ad45002f1c52d7a8cfffa92f but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k2: expected w2.s368.o2.i1.35564c595be24d2431cf8edb but found <absent>  (operation ids: w2-368, w2-371)
+    key w2k3: expected w2.s366.o3.i1.87affc0e3df509 but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k5: expected w2.s367.o6.i1.a542f79f3199ad737b67f546 but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k6: expected w2.s367.o3.i1.8e09a4d04637ed19f4469f94bfc84a6a but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k8: expected w2.s343.o2.i1.31a6c197b but found <absent>  (operation ids: w2-343, w2-371)
+    key w2k9: expected w2.s368.o0.i1.9c6355457 but found <absent>  (operation ids: w2-368, w2-371)
+  writer 3: the dump matches none of the 2 allowed state(s)
+    unanswered request: w3-370 (allowed: fully applied or fully absent)
+    key w3k0: expected w3.s366.o0.i1.3a3eaad06e5e but found <absent>  (operation ids: w3-366, w3-370)
+    key w3k10: expected w3.s361.o0.i1.acd579a1ec but found <absent>  (operation ids: w3-361, w3-370)
+    key w3k13: expected w3.s365.o7.i1.1754edcc1c721af8e8d74ac22e168f but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k14: expected w3.s362.o0.i1.3dde4be40a61973c1c2a64d9 but found <absent>  (operation ids: w3-362, w3-370)
+    key w3k15: expected w3.s368.o0.i1.af79a9274d1edf644106 but found <absent>  (operation ids: w3-368, w3-370)
+    key w3k2: expected w3.s360.o4.i1.e540868ff3903bfe4805db2449f731293e95b but found <absent>  (operation ids: w3-360, w3-370)
+    key w3k4: expected w3.s365.o6.i1.1e123f8 but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k5: expected w3.s357.o1.i1.0cc65a1aa5788f15d9fbb6a5614d86 but found <absent>  (operation ids: w3-357, w3-370)
+    key w3k6: expected w3.s360.o6.i1.80f798c8bd06a12d27be0ee0f4 but found <absent>  (operation ids: w3-360, w3-370)
+    key w3k7: expected w3.s352.o3.i1.03b7b8 but found <absent>  (operation ids: w3-352, w3-370)
+    key w3k8: expected w3.s365.o0.i1.ccef1111875c28b8119b706fb6 but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k9: expected w3.s365.o3.i1.1c08e43083fc6eaec4aca08c176d41e696604cb but found <absent>  (operation ids: w3-365, w3-370)
+REPRODUCED: the saved files fail again:
+  writer 1: the dump matches none of the 2 allowed state(s)
+    unanswered request: w1-371 (allowed: fully applied or fully absent)
+    key w1k0: expected w1.s363.o3.i1.d84b71c554b3670763bb2f74f54d55 or w1.s371.o2.i1.391ab9c9cb994af331c2e9d93 but found <absent>  (operation ids: w1-363, w1-371)
+    key w1k1: expected w1.s370.o6.i1.9a99caff but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k10: expected w1.s368.o3.i1.2b93d488 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k12: expected w1.s366.o0.i1.3d2a8fb9c2 or w1.s371.o7.i1.7d but found <absent>  (operation ids: w1-366, w1-371)
+    key w1k13: expected w1.s365.o4.i1.b51e8345384c49062ca7f5f4225a5 or w1.s371.o0.i1.d0bd222de2d5cd but found <absent>  (operation ids: w1-365, w1-371)
+    key w1k14: expected w1.s368.o5.i1.2a778a49098f1662f97e8bf2fb4c55356bc or w1.s371.o1.i1.75bdad057a41b7a2792a3e7dbc5b4 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k15: expected w1.s370.o3.i1.327b1ef30f51e80ee3c338042 but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k2: expected w1.s363.o8.i1.a62885841b42ca748a4c56eb or w1.s371.o5.i1. but found <absent>  (operation ids: w1-363, w1-371)
+    key w1k3: expected w1.s368.o4.i1.301631dacc544 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k4: expected w1.s368.o8.i1.5fff or w1.s371.o6.i1.8df23d09758fc6a but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k5: expected w1.s370.o5.i1.cd251cb3 or w1.s371.o3.i1.99cbeba87e2c1f63959 but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k7: expected w1.s368.o2.i1.3c98131b12c73a803b3 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k8: expected w1.s368.o1.i1.5012ab798e3c547c4df8dc488346 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k9: expected w1.s370.o7.i1.070e564667632d9116ed6 or w1.s371.o4.i1.189c7e80 but found <absent>  (operation ids: w1-370, w1-371)
+  writer 2: the dump matches none of the 2 allowed state(s)
+    unanswered request: w2-371 (allowed: fully applied or fully absent)
+    key w2k0: expected w2.s367.o7.i1.1a6776af2aed29686 but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k1: expected w2.s366.o0.i1. or w2.s371.o0.i1.fc7ce7977b24e8e43702cd748b3d but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k11: expected w2.s366.o1.i1.2fb2dd6a8b4a32a1824053fe5eb06 but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k12: expected w2.s356.o0.i1.0b4d6bda194737462559d9b6f8d7180 but found <absent>  (operation ids: w2-356, w2-371)
+    key w2k14: expected w2.s368.o3.i1.5727d81dfb66c799ed0497f but found <absent>  (operation ids: w2-368, w2-371)
+    key w2k15: expected w2.s367.o4.i1.75472ad45002f1c52d7a8cfffa92f but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k2: expected w2.s368.o2.i1.35564c595be24d2431cf8edb but found <absent>  (operation ids: w2-368, w2-371)
+    key w2k3: expected w2.s366.o3.i1.87affc0e3df509 but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k5: expected w2.s367.o6.i1.a542f79f3199ad737b67f546 but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k6: expected w2.s367.o3.i1.8e09a4d04637ed19f4469f94bfc84a6a but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k8: expected w2.s343.o2.i1.31a6c197b but found <absent>  (operation ids: w2-343, w2-371)
+    key w2k9: expected w2.s368.o0.i1.9c6355457 but found <absent>  (operation ids: w2-368, w2-371)
+  writer 3: the dump matches none of the 2 allowed state(s)
+    unanswered request: w3-370 (allowed: fully applied or fully absent)
+    key w3k0: expected w3.s366.o0.i1.3a3eaad06e5e but found <absent>  (operation ids: w3-366, w3-370)
+    key w3k10: expected w3.s361.o0.i1.acd579a1ec but found <absent>  (operation ids: w3-361, w3-370)
+    key w3k13: expected w3.s365.o7.i1.1754edcc1c721af8e8d74ac22e168f but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k14: expected w3.s362.o0.i1.3dde4be40a61973c1c2a64d9 but found <absent>  (operation ids: w3-362, w3-370)
+    key w3k15: expected w3.s368.o0.i1.af79a9274d1edf644106 but found <absent>  (operation ids: w3-368, w3-370)
+    key w3k2: expected w3.s360.o4.i1.e540868ff3903bfe4805db2449f731293e95b but found <absent>  (operation ids: w3-360, w3-370)
+    key w3k4: expected w3.s365.o6.i1.1e123f8 but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k5: expected w3.s357.o1.i1.0cc65a1aa5788f15d9fbb6a5614d86 but found <absent>  (operation ids: w3-357, w3-370)
+    key w3k6: expected w3.s360.o6.i1.80f798c8bd06a12d27be0ee0f4 but found <absent>  (operation ids: w3-360, w3-370)
+    key w3k7: expected w3.s352.o3.i1.03b7b8 but found <absent>  (operation ids: w3-352, w3-370)
+    key w3k8: expected w3.s365.o0.i1.ccef1111875c28b8119b706fb6 but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k9: expected w3.s365.o3.i1.1c08e43083fc6eaec4aca08c176d41e696604cb but found <absent>  (operation ids: w3-365, w3-370)
+exit 1
+$ python3 torture.py --replay .torture-work/fix7-demo-failures/seed-16-iter-1      (the real engine)
+replay: .torture-work/fix7-demo-failures/seed-16-iter-1 (saved: mode default seed 16 iteration 1, engine 8a90082 + uncommitted changes)
+replay: engine now 8a90082 + uncommitted changes; files restored: none
+replay: the saved problems were:
+  writer 1: the dump matches none of the 2 allowed state(s)
+    unanswered request: w1-371 (allowed: fully applied or fully absent)
+    key w1k0: expected w1.s363.o3.i1.d84b71c554b3670763bb2f74f54d55 or w1.s371.o2.i1.391ab9c9cb994af331c2e9d93 but found <absent>  (operation ids: w1-363, w1-371)
+    key w1k1: expected w1.s370.o6.i1.9a99caff but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k10: expected w1.s368.o3.i1.2b93d488 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k12: expected w1.s366.o0.i1.3d2a8fb9c2 or w1.s371.o7.i1.7d but found <absent>  (operation ids: w1-366, w1-371)
+    key w1k13: expected w1.s365.o4.i1.b51e8345384c49062ca7f5f4225a5 or w1.s371.o0.i1.d0bd222de2d5cd but found <absent>  (operation ids: w1-365, w1-371)
+    key w1k14: expected w1.s368.o5.i1.2a778a49098f1662f97e8bf2fb4c55356bc or w1.s371.o1.i1.75bdad057a41b7a2792a3e7dbc5b4 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k15: expected w1.s370.o3.i1.327b1ef30f51e80ee3c338042 but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k2: expected w1.s363.o8.i1.a62885841b42ca748a4c56eb or w1.s371.o5.i1. but found <absent>  (operation ids: w1-363, w1-371)
+    key w1k3: expected w1.s368.o4.i1.301631dacc544 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k4: expected w1.s368.o8.i1.5fff or w1.s371.o6.i1.8df23d09758fc6a but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k5: expected w1.s370.o5.i1.cd251cb3 or w1.s371.o3.i1.99cbeba87e2c1f63959 but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k7: expected w1.s368.o2.i1.3c98131b12c73a803b3 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k8: expected w1.s368.o1.i1.5012ab798e3c547c4df8dc488346 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k9: expected w1.s370.o7.i1.070e564667632d9116ed6 or w1.s371.o4.i1.189c7e80 but found <absent>  (operation ids: w1-370, w1-371)
+  writer 2: the dump matches none of the 2 allowed state(s)
+    unanswered request: w2-371 (allowed: fully applied or fully absent)
+    key w2k0: expected w2.s367.o7.i1.1a6776af2aed29686 but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k1: expected w2.s366.o0.i1. or w2.s371.o0.i1.fc7ce7977b24e8e43702cd748b3d but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k11: expected w2.s366.o1.i1.2fb2dd6a8b4a32a1824053fe5eb06 but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k12: expected w2.s356.o0.i1.0b4d6bda194737462559d9b6f8d7180 but found <absent>  (operation ids: w2-356, w2-371)
+    key w2k14: expected w2.s368.o3.i1.5727d81dfb66c799ed0497f but found <absent>  (operation ids: w2-368, w2-371)
+    key w2k15: expected w2.s367.o4.i1.75472ad45002f1c52d7a8cfffa92f but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k2: expected w2.s368.o2.i1.35564c595be24d2431cf8edb but found <absent>  (operation ids: w2-368, w2-371)
+    key w2k3: expected w2.s366.o3.i1.87affc0e3df509 but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k5: expected w2.s367.o6.i1.a542f79f3199ad737b67f546 but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k6: expected w2.s367.o3.i1.8e09a4d04637ed19f4469f94bfc84a6a but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k8: expected w2.s343.o2.i1.31a6c197b but found <absent>  (operation ids: w2-343, w2-371)
+    key w2k9: expected w2.s368.o0.i1.9c6355457 but found <absent>  (operation ids: w2-368, w2-371)
+  writer 3: the dump matches none of the 2 allowed state(s)
+    unanswered request: w3-370 (allowed: fully applied or fully absent)
+    key w3k0: expected w3.s366.o0.i1.3a3eaad06e5e but found <absent>  (operation ids: w3-366, w3-370)
+    key w3k10: expected w3.s361.o0.i1.acd579a1ec but found <absent>  (operation ids: w3-361, w3-370)
+    key w3k13: expected w3.s365.o7.i1.1754edcc1c721af8e8d74ac22e168f but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k14: expected w3.s362.o0.i1.3dde4be40a61973c1c2a64d9 but found <absent>  (operation ids: w3-362, w3-370)
+    key w3k15: expected w3.s368.o0.i1.af79a9274d1edf644106 but found <absent>  (operation ids: w3-368, w3-370)
+    key w3k2: expected w3.s360.o4.i1.e540868ff3903bfe4805db2449f731293e95b but found <absent>  (operation ids: w3-360, w3-370)
+    key w3k4: expected w3.s365.o6.i1.1e123f8 but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k5: expected w3.s357.o1.i1.0cc65a1aa5788f15d9fbb6a5614d86 but found <absent>  (operation ids: w3-357, w3-370)
+    key w3k6: expected w3.s360.o6.i1.80f798c8bd06a12d27be0ee0f4 but found <absent>  (operation ids: w3-360, w3-370)
+    key w3k7: expected w3.s352.o3.i1.03b7b8 but found <absent>  (operation ids: w3-352, w3-370)
+    key w3k8: expected w3.s365.o0.i1.ccef1111875c28b8119b706fb6 but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k9: expected w3.s365.o3.i1.1c08e43083fc6eaec4aca08c176d41e696604cb but found <absent>  (operation ids: w3-365, w3-370)
+REPRODUCED: the saved files fail again:
+  writer 1: the dump matches none of the 2 allowed state(s)
+    unanswered request: w1-371 (allowed: fully applied or fully absent)
+    key w1k0: expected w1.s363.o3.i1.d84b71c554b3670763bb2f74f54d55 or w1.s371.o2.i1.391ab9c9cb994af331c2e9d93 but found <absent>  (operation ids: w1-363, w1-371)
+    key w1k1: expected w1.s370.o6.i1.9a99caff but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k10: expected w1.s368.o3.i1.2b93d488 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k12: expected w1.s366.o0.i1.3d2a8fb9c2 or w1.s371.o7.i1.7d but found <absent>  (operation ids: w1-366, w1-371)
+    key w1k13: expected w1.s365.o4.i1.b51e8345384c49062ca7f5f4225a5 or w1.s371.o0.i1.d0bd222de2d5cd but found <absent>  (operation ids: w1-365, w1-371)
+    key w1k14: expected w1.s368.o5.i1.2a778a49098f1662f97e8bf2fb4c55356bc or w1.s371.o1.i1.75bdad057a41b7a2792a3e7dbc5b4 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k15: expected w1.s370.o3.i1.327b1ef30f51e80ee3c338042 but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k2: expected w1.s363.o8.i1.a62885841b42ca748a4c56eb or w1.s371.o5.i1. but found <absent>  (operation ids: w1-363, w1-371)
+    key w1k3: expected w1.s368.o4.i1.301631dacc544 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k4: expected w1.s368.o8.i1.5fff or w1.s371.o6.i1.8df23d09758fc6a but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k5: expected w1.s370.o5.i1.cd251cb3 or w1.s371.o3.i1.99cbeba87e2c1f63959 but found <absent>  (operation ids: w1-370, w1-371)
+    key w1k7: expected w1.s368.o2.i1.3c98131b12c73a803b3 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k8: expected w1.s368.o1.i1.5012ab798e3c547c4df8dc488346 but found <absent>  (operation ids: w1-368, w1-371)
+    key w1k9: expected w1.s370.o7.i1.070e564667632d9116ed6 or w1.s371.o4.i1.189c7e80 but found <absent>  (operation ids: w1-370, w1-371)
+  writer 2: the dump matches none of the 2 allowed state(s)
+    unanswered request: w2-371 (allowed: fully applied or fully absent)
+    key w2k0: expected w2.s367.o7.i1.1a6776af2aed29686 but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k1: expected w2.s366.o0.i1. or w2.s371.o0.i1.fc7ce7977b24e8e43702cd748b3d but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k11: expected w2.s366.o1.i1.2fb2dd6a8b4a32a1824053fe5eb06 but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k12: expected w2.s356.o0.i1.0b4d6bda194737462559d9b6f8d7180 but found <absent>  (operation ids: w2-356, w2-371)
+    key w2k14: expected w2.s368.o3.i1.5727d81dfb66c799ed0497f but found <absent>  (operation ids: w2-368, w2-371)
+    key w2k15: expected w2.s367.o4.i1.75472ad45002f1c52d7a8cfffa92f but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k2: expected w2.s368.o2.i1.35564c595be24d2431cf8edb but found <absent>  (operation ids: w2-368, w2-371)
+    key w2k3: expected w2.s366.o3.i1.87affc0e3df509 but found <absent>  (operation ids: w2-366, w2-371)
+    key w2k5: expected w2.s367.o6.i1.a542f79f3199ad737b67f546 but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k6: expected w2.s367.o3.i1.8e09a4d04637ed19f4469f94bfc84a6a but found <absent>  (operation ids: w2-367, w2-371)
+    key w2k8: expected w2.s343.o2.i1.31a6c197b but found <absent>  (operation ids: w2-343, w2-371)
+    key w2k9: expected w2.s368.o0.i1.9c6355457 but found <absent>  (operation ids: w2-368, w2-371)
+  writer 3: the dump matches none of the 2 allowed state(s)
+    unanswered request: w3-370 (allowed: fully applied or fully absent)
+    key w3k0: expected w3.s366.o0.i1.3a3eaad06e5e but found <absent>  (operation ids: w3-366, w3-370)
+    key w3k10: expected w3.s361.o0.i1.acd579a1ec but found <absent>  (operation ids: w3-361, w3-370)
+    key w3k13: expected w3.s365.o7.i1.1754edcc1c721af8e8d74ac22e168f but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k14: expected w3.s362.o0.i1.3dde4be40a61973c1c2a64d9 but found <absent>  (operation ids: w3-362, w3-370)
+    key w3k15: expected w3.s368.o0.i1.af79a9274d1edf644106 but found <absent>  (operation ids: w3-368, w3-370)
+    key w3k2: expected w3.s360.o4.i1.e540868ff3903bfe4805db2449f731293e95b but found <absent>  (operation ids: w3-360, w3-370)
+    key w3k4: expected w3.s365.o6.i1.1e123f8 but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k5: expected w3.s357.o1.i1.0cc65a1aa5788f15d9fbb6a5614d86 but found <absent>  (operation ids: w3-357, w3-370)
+    key w3k6: expected w3.s360.o6.i1.80f798c8bd06a12d27be0ee0f4 but found <absent>  (operation ids: w3-360, w3-370)
+    key w3k7: expected w3.s352.o3.i1.03b7b8 but found <absent>  (operation ids: w3-352, w3-370)
+    key w3k8: expected w3.s365.o0.i1.ccef1111875c28b8119b706fb6 but found <absent>  (operation ids: w3-365, w3-370)
+    key w3k9: expected w3.s365.o3.i1.1c08e43083fc6eaec4aca08c176d41e696604cb but found <absent>  (operation ids: w3-365, w3-370)
+exit 1
+
+Memory of the in-memory event buffer (tester process only, resource.getrusage RUSAGE_SELF,
+torture --mode large-values --iterations 12 --seed 7074, measured 2026-11-07 ~07:27 IST):
+  no event buffer (patched off for the measurement)        218 MB peak
+  first version: first 64 MiB of requests kept in full      497 MB peak
+  final: the LAST 32 MiB of requests kept in full           391 MB peak
+  bytes kept per iteration with the 64 MiB version: 11.8 to 63.9 MB; largest single request 5.12 MB
+  The buffer is bounded per iteration and replaced each iteration; the rest of the extra peak is
+  not explained (likely the allocator keeping freed memory) - not verified.
+
+----- a file-level bug: a COPY of the engine whose recovery does not cut a torn tail (.torture-work/fix7-broken, recovery.py step 6 os.ftruncate replaced by pass) -----
+$ python3 torture.py --iterations 50 --seed 7077 --kvdb .torture-work/fix7-broken/kvdb.py --failures-dir .torture-work/fix7-demo-failures2
+torture: mode default seed 7077 iterations 50 writers 3 kvdb .torture-work/fix7-broken/kvdb.py
+fresh database every 25 iterations
+iter    2 seed 7077 kill_ms  104.9 in_flight 3 acks    230 keys    -1 FAIL (0.36 s)
+FAIL at iteration 2 (seed 7077, mode default):
+  open failed (exit 3): ERR DatabaseFailed: file is 24569 bytes after recovery, expected 24524 
+saved: .torture-work/fix7-demo-failures2/seed-7077-iter-2
+replay: python3 torture.py --replay .torture-work/fix7-demo-failures2/seed-7077-iter-2
+exit 1
+$ ls -l .torture-work/fix7-demo-failures2/seed-7077-iter-2
+24569 db-after-kill.kv
+24569 db-after-open.kv
+17282 events.log
+852 meta.json
+4967 oracle-state.json
+7343 oracle.log
+615 report.txt
+15772 trace.log
+$ python3 torture.py --replay .torture-work/fix7-demo-failures2/seed-7077-iter-2 --kvdb .torture-work/fix7-broken/kvdb.py      (the broken engine)
+replay: .torture-work/fix7-demo-failures2/seed-7077-iter-2 (saved: mode default seed 7077 iteration 2, engine 8a90082 + uncommitted changes)
+replay: engine now 8a90082 + uncommitted changes; files restored: db.kv
+replay: the saved problems were:
+REPRODUCED: the saved files fail again:
+exit 1
+$ python3 torture.py --replay .torture-work/fix7-demo-failures2/seed-7077-iter-2      (the real engine)
+replay: .torture-work/fix7-demo-failures2/seed-7077-iter-2 (saved: mode default seed 7077 iteration 2, engine 8a90082 + uncommitted changes)
+replay: engine now 8a90082 + uncommitted changes; files restored: db.kv
+replay: the saved problems were:
+NOT REPRODUCED: the saved files pass now (keys 35). If the saved problem was a protocol or thread error, it depends on timing and a file replay cannot show it.
+exit 0
+
+----- the same, after adding engine_files_sha256 to meta.json and the replay lines -----
+FAIL at iteration 1 (seed 7077, mode default):
+saved: .torture-work/fix7-demo-failures3/seed-7077-iter-1
+exit 1
+ "engine": ".torture-work/fix7-broken/kvdb.py",
+ "engine_commit": "8a90082 + uncommitted changes",
+ "engine_files_sha256": "05c100b072079f72",
+$ python3 torture.py --replay .torture-work/fix7-demo-failures3/seed-7077-iter-1 --kvdb .torture-work/fix7-broken/kvdb.py
+replay: .torture-work/fix7-demo-failures3/seed-7077-iter-1 (saved: mode default seed 7077 iteration 1, engine 8a90082 + uncommitted changes files 05c100b072079f72)
+replay: engine now 8a90082 + uncommitted changes files 05c100b072079f72; files restored: db.kv
+replay: the saved problems were:
+REPRODUCED: the saved files fail again:
+exit 1
+$ python3 torture.py --replay .torture-work/fix7-demo-failures3/seed-7077-iter-1
+replay: .torture-work/fix7-demo-failures3/seed-7077-iter-1 (saved: mode default seed 7077 iteration 1, engine 8a90082 + uncommitted changes files 05c100b072079f72)
+replay: engine now 8a90082 + uncommitted changes files cffa31669a9f16f8 (A DIFFERENT ENGINE); files restored: db.kv
+replay: the saved problems were:
+NOT REPRODUCED: the saved files pass now (keys 38). If the saved problem was a protocol or thread error, it depends on timing and a file replay cannot show it.
+exit 0

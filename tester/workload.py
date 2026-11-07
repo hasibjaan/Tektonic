@@ -5,7 +5,10 @@ protocol"). Every value describes itself — writer, sequence, op number and
 iteration, then a random tail — so a value that is mixed, torn or invented
 can never match what the oracle expects.
 """
+import collections
+import hashlib
 import threading
+import time
 
 MAX_VALUE = 1_048_576          # README "Limits"
 
@@ -111,10 +114,50 @@ def next_request(rng, profile, wid, seq, iteration):
     return rid, b"".join(lines), effects, "batch of {}".format(n)
 
 
+class EventLog:
+    """One iteration's requests and replies, kept in memory and written to events.log
+    only on a failure (Fix 7). The MOST RECENT FULL_BYTES of requests are kept in full
+    (the ones nearest the kill matter most); an older request is shrunk to its first
+    line, its length and its SHA-256 when the limit is passed. Replies are always kept
+    in full. Measured: keeping every 1 MB value in full roughly doubled the tester's
+    peak memory in large-values mode (evidence/tester-hardening.txt)."""
+    FULL_BYTES = 32 * 1024 * 1024
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.items = []
+        self.full = collections.deque()     # indexes into items of requests still kept in full
+        self.kept = 0
+
+    def send(self, request):
+        t = time.monotonic()
+        with self.lock:
+            self.full.append(len(self.items))
+            self.items.append((t, b"SEND", request))
+            self.kept += len(request)
+            while self.kept > self.FULL_BYTES and len(self.full) > 1:
+                i = self.full.popleft()
+                old_t, _, old = self.items[i]
+                self.kept -= len(old)
+                self.items[i] = (old_t, b"SEND-SUMMARY", b"%s ... [%d bytes, sha256 %s; only the last %d "
+                                 b"bytes of requests are kept in full]\n" % (
+                                     old.split(b"\n", 1)[0][:200], len(old),
+                                     hashlib.sha256(old).hexdigest().encode(), self.FULL_BYTES))
+
+    def recv(self, line):
+        with self.lock:
+            self.items.append((time.monotonic(), b"RECV", line.encode("utf-8", "replace") + b"\n"))
+
+    def snapshot(self):
+        with self.lock:
+            return list(self.items)
+
+
 class Writer(threading.Thread):
     """Sends one request, waits for its reply, sends the next — never two in flight."""
 
-    def __init__(self, wid, rng, profile, oracle, child, stop, iteration, seq_start, trace, kinds=None):
+    def __init__(self, wid, rng, profile, oracle, child, stop, iteration, seq_start, trace, kinds=None,
+                 events=None):
         super().__init__(daemon=True, name="writer-%d" % wid)
         self.wid, self.rng, self.profile = wid, rng, profile
         self.oracle, self.child, self.stop = oracle, child, stop
@@ -122,6 +165,7 @@ class Writer(threading.Thread):
         self.replied = threading.Event()
         self.sent_count = 0
         self.kinds = kinds                  # request id -> type, for the coverage verdict
+        self.events = events                # this iteration's full requests (failure evidence)
         self.error = None                   # a crash of this thread, as a traceback: a FAIL
 
     def run(self):
@@ -139,6 +183,8 @@ class Writer(threading.Thread):
             self.oracle.sent(self.wid, rid.decode(), effects, summary)   # logged BEFORE it is sent
             if self.kinds is not None:
                 self.kinds[rid.decode()] = summary.split()[0]
+            if self.events is not None:
+                self.events.send(request)
             self.trace("SEND {} {} ({} bytes)".format(rid.decode(), summary, len(request)))
             if not self.child.send(request):
                 return                                              # the engine is gone

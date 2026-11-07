@@ -31,7 +31,7 @@ LATER_MODES = {}
 def build_parser():
     p = argparse.ArgumentParser(prog="torture", description="Hard-kill kvdb serve and verify every promise.")
     p.add_argument("--iterations", type=int, default=500, help="kills to run (targeted: rounds) [500]")
-    p.add_argument("--seed", type=int, required=True, help="REQUIRED: the seed for every random choice")
+    p.add_argument("--seed", type=int, default=None, help="REQUIRED (except --replay): the seed for every random choice")
     p.add_argument("--mode", default="default",
                    choices=list(RANDOM_MODES) + list(LATER_MODES) + ["targeted", "scale"])
     p.add_argument("--writers", type=int, default=3, help="concurrent writer threads, at least 2 [3]")
@@ -46,13 +46,20 @@ def build_parser():
                    help="scale mode: one transaction per key, or batches of 10,000 [single]")
     p.add_argument("--runs", type=int, default=5, help="scale mode: timed opens [5]")
     p.add_argument("--reuse", action="store_true", help="scale mode: reuse the dataset already built")
+    p.add_argument("--replay", metavar="FOLDER", default=None,
+                   help="judge a saved failure folder again (its files and oracle state); exit 1 if it reproduces")
     p.add_argument("--failures-dir", default=os.path.join(REPO, "evidence", "failures"),
                    help="where the first failure is saved [evidence/failures]")
     return p
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.replay is not None:
+        return modes.run_replay(args)
+    if args.seed is None:
+        parser.error("--seed is required (every random choice comes from it)")
     if args.iterations < 1:
         print("--iterations must be at least 1", file=sys.stderr)
         return 2
