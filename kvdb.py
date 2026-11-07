@@ -237,7 +237,8 @@ class Server:
         if cmd == b"compact" and len(parts) == 2:
             return b"compact", None
         if cmd == b"batch" and len(parts) == 3:
-            if not parts[2].isdigit() or not 1 <= int(parts[2]) <= layout.MAX_OPS:
+            # length first: int() of thousands of digits raises ValueError in Python 3.11+
+            if not (parts[2].isdigit() and len(parts[2]) <= 5) or not 1 <= int(parts[2]) <= layout.MAX_OPS:
                 # The count is unusable, so the following lines cannot be skipped safely:
                 # they will be read as requests of their own (and most will get ERR).
                 raise BadToken("batch needs a count from 1 to {}".format(layout.MAX_OPS))

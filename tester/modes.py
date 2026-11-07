@@ -4,14 +4,17 @@ The engine is only ever used as a separate process through kvdb.py (CLAUDE.md
 section 14). This package never imports the engine (tools/check_imports.py
 proves it).
 """
+import collections
 import os
 import queue
 import random
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
+import traceback
 
 from tester.oracle import Oracle, short
 from tester.workload import PROFILES, Profile, Writer, next_request, writer_keys
@@ -33,6 +36,40 @@ class ChildGone(Exception):
     pass
 
 
+class ProtocolError(Exception):
+    """A reply line that is not exactly one of the replies the protocol allows."""
+
+
+# Request ids the tester sends: w<writer>-<sequence> (and w1-c<n> for a targeted compact).
+# The digit counts are bounded BEFORE int() is called (CLAUDE.md section 14).
+_REQUEST_ID = re.compile(r"w(\d{1,6})-c?\d{1,12}\Z")
+
+
+def parse_reply(line):
+    """Strictly parse one complete stdout line of serve.
+
+    Allowed: "ACK <id>", "NOTFOUND <id>", "VAL <id> <value>", "ERR <id> <reason>".
+    Returns (kind, request id, writer id, rest). Anything else raises ProtocolError.
+    """
+    parts = line.split(" ", 2)
+    kind = parts[0]
+    if kind in ("ACK", "NOTFOUND"):
+        if len(parts) != 2:
+            raise ProtocolError("{} takes exactly one request id".format(kind))
+    elif kind == "VAL":
+        if len(parts) != 3 or not parts[2] or " " in parts[2]:
+            raise ProtocolError("VAL takes a request id and one value token")
+    elif kind == "ERR":
+        if len(parts) != 3 or not parts[2].strip():
+            raise ProtocolError("ERR takes a request id and a reason")
+    else:
+        raise ProtocolError("not a reply line")
+    m = _REQUEST_ID.match(parts[1])
+    if not m:
+        raise ProtocolError("malformed request id {!r}".format(parts[1][:40]))
+    return kind, parts[1], int(m.group(1)), parts[2] if len(parts) == 3 else ""
+
+
 class Child:
     """kvdb.py serve as a child process with binary pipes."""
 
@@ -47,22 +84,31 @@ class Child:
         self.stderr_lines = []
         self.err_queue = queue.Queue()
         self.on_reply = on_reply
+        self.errors = []                                   # crashes of the reader threads: a FAIL
         self.readers = [threading.Thread(target=self._read_stderr, daemon=True),
                         threading.Thread(target=self._read_stdout, daemon=True)]
         for t in self.readers:
             t.start()
 
     def _read_stderr(self):
-        for raw in self.proc.stderr:
-            line = raw.decode("utf-8", "replace").rstrip("\n")
-            self.stderr_lines.append(line)
-            self.err_queue.put(line)
-        self.err_queue.put(None)
+        try:
+            for raw in self.proc.stderr:
+                line = raw.decode("utf-8", "replace").rstrip("\n")
+                self.stderr_lines.append(line)
+                self.err_queue.put(line)
+        except BaseException:                             # never die silently
+            self.errors.append("stderr reader thread crashed:\n" + traceback.format_exc())
+        finally:
+            self.err_queue.put(None)
 
     def _read_stdout(self):
-        for raw in self.proc.stdout:
-            if raw.endswith(b"\n"):                       # only complete lines count
-                self.on_reply(raw[:-1].decode("utf-8", "replace"))
+        try:
+            for raw in self.proc.stdout:
+                # A line without "\n" is one the kill cut in half: it was never sent.
+                if raw.endswith(b"\n"):
+                    self.on_reply(raw[:-1].decode("utf-8", "replace"))
+        except BaseException:                             # never die silently
+            self.errors.append("reply reader thread crashed:\n" + traceback.format_exc())
 
     def wait_stderr(self, prefix, timeout=TIMEOUT):
         deadline = time.monotonic() + timeout
@@ -190,35 +236,39 @@ def fail(run, iteration, problems, db_after_kill, db, oracle_log):
 
 
 def make_dispatch(oracle, writers_by_id, run, allowed_errors=()):
-    """Replies from serve's stdout -> the oracle. An ERR is allowed only if its reason
-    starts with one of allowed_errors (disk-full: SizeCapReached); any other ERR, and
-    any reply that breaks the protocol, is a FAIL — never silently ignored."""
+    """Replies from serve's stdout -> the oracle.
+
+    Every line must parse with parse_reply and name a request that is in flight;
+    otherwise it is a PROTOCOL FAILURE (FAIL, line printed). An ERR is allowed only
+    if its reason starts with one of allowed_errors (disk-full: SizeCapReached).
+    The writer is released only after a reply that was fully understood."""
     def dispatch(line):
-        parts = line.split(" ", 2)
-        if len(parts) < 2 or parts[0] not in ("ACK", "ERR", "VAL", "NOTFOUND"):
-            run.trace("??? {}".format(line[:200]))
-            return
-        rid = parts[1]
         run.trace("RECV {}".format(line[:200]))
         try:
-            wid = int(rid[1:rid.index("-")])
-            if wid not in oracle.models:
-                raise ValueError("reply for unknown request id {!r}".format(rid))
-            if parts[0] == "ACK":
-                oracle.acked(wid, rid)
-            elif parts[0] == "ERR":
-                reason = parts[2] if len(parts) > 2 else ""
-                oracle.erred(wid, rid, reason)
-                run.err_counts[reason.split(":")[0]] = run.err_counts.get(reason.split(":")[0], 0) + 1
-                if not reason.startswith(tuple(allowed_errors)) or not allowed_errors:
-                    raise ValueError("unexpected ERR (not a clean, allowed refusal): {}".format(reason[:120]))
-        except Exception as exc:                          # a protocol break is a FAIL, never silent
-            run.protocol_errors.append("reply {!r}: {}".format(line[:120], exc))
-            if parts[0] != "ERR":
-                return
+            kind, rid, wid, rest = parse_reply(line)
+        except ProtocolError as exc:
+            run.protocol_errors.append("PROTOCOL FAILURE: reply line {!r}: {}".format(line[:200], exc))
+            return
         writer = writers_by_id.get(wid)
-        if writer is not None:
-            writer.replied.set()
+        if wid not in oracle.models or writer is None:
+            run.protocol_errors.append("PROTOCOL FAILURE: reply line {!r}: no such writer".format(line[:200]))
+            return
+        try:
+            if kind == "ACK":
+                oracle.acked(wid, rid)                    # raises if rid is not in flight
+                run.ack_kinds[run.sent_kinds.get(rid, "?")] += 1
+            elif kind == "ERR":
+                oracle.erred(wid, rid, rest)              # raises if rid is not in flight
+                reason = rest.split(":")[0]
+                run.err_counts[reason] = run.err_counts.get(reason, 0) + 1
+                if not allowed_errors or not rest.startswith(tuple(allowed_errors)):
+                    raise ProtocolError("unexpected ERR (not a clean, allowed refusal): {}".format(rest[:120]))
+            else:
+                raise ProtocolError("a reply to a get, but this mode never sends get")
+        except Exception as exc:
+            run.protocol_errors.append("PROTOCOL FAILURE: reply line {!r}: {}".format(line[:200], exc))
+            return
+        writer.replied.set()
     return dispatch
 
 
@@ -260,6 +310,8 @@ def run_random(args):
     profile.writers = args.writers
     run = Run(args, args.mode)
     run.err_counts = {}
+    run.sent_kinds = {}                                   # request id -> put / del / batch / compact
+    run.ack_kinds = collections.Counter()
     db = os.path.join(run.dir, "db.kv")
     oracle_log = os.path.join(run.dir, "oracle.log")
     if profile.shared_keys:
@@ -299,7 +351,8 @@ def run_random(args):
             child.kill()
             return fail(run, it, ["serve did not start: {}".format(exc)], None, db, oracle_log)
         for w in seqs:
-            writers_by_id[w] = Writer(w, rngs[w], profile, oracle, child, stop, it, seqs[w], run.trace)
+            writers_by_id[w] = Writer(w, rngs[w], profile, oracle, child, stop, it, seqs[w], run.trace,
+                                      kinds=run.sent_kinds)
         for wr in writers_by_id.values():
             wr.start()
         time.sleep(delay / 1000.0)
@@ -330,7 +383,8 @@ def run_random(args):
             extra += " " + {"before-start": "s", "during-recovery": "R", "after-ready": "a"}[phase]
             run.trace("RESTART-KILL after {:.1f} ms: {}".format(ms, phase))
         dump, problem = read_back(run.kvdb, db)
-        problems = list(run.protocol_errors) or ([problem] if problem else oracle.verify(dump))
+        thread_errors = child.errors + [w.error for w in writers_by_id.values() if w.error]
+        problems = (list(run.protocol_errors) + thread_errors) or ([problem] if problem else oracle.verify(dump))
         if not problems and profile.max_bytes and os.path.getsize(db) > profile.max_bytes:
             problems = ["file is {} bytes, over max_bytes {}".format(os.path.getsize(db), profile.max_bytes)]
         seconds = time.monotonic() - started
@@ -346,7 +400,7 @@ def run_random(args):
             return fail(run, it, problems, after_kill, db, oracle_log)
         passes += 1
     avg = sum(times) / len(times)
-    print("PASS {}/{}".format(passes, args.iterations))
+    print("safety: PASS {}/{} (no broken promise found)".format(passes, args.iterations))
     print("kills with at least one request in flight: {}/{} ({:.1f}%)".format(
         with_inflight, args.iterations, 100.0 * with_inflight / args.iterations))
     if profile.p_compact:
@@ -357,6 +411,36 @@ def run_random(args):
     if run.err_counts:
         print("ERR replies by reason: " + ", ".join("{} {}".format(k, v) for k, v in sorted(run.err_counts.items())))
     print("average iteration {:.2f} s; projected 200 iterations: {:.0f} s".format(avg, 200 * avg))
+    return coverage_verdict(profile, args.iterations, run.ack_kinds)
+
+
+MIN_ACKS_PER_ITERATION = 2
+MIN_ACKS = 20
+
+
+def coverage_verdict(profile, iterations, ack_kinds):
+    """Safety passed; did the run actually test something? (exit 0 PASS, 3 INCONCLUSIVE)
+
+    The real engine gives hundreds of ACKs per iteration, so asking for at least
+    max(20, 2 x iterations) in the whole run catches an engine that never answers
+    while still allowing kills that land before the first ACK. Every request type
+    the mode sends must have been ACKed at least once."""
+    intended = ["put", "del"]
+    if not profile.shared_keys and profile.p_put + profile.p_del < 1.0:
+        intended.append("batch")
+    if profile.p_compact:
+        intended.append("compact")
+    minimum = max(MIN_ACKS, MIN_ACKS_PER_ITERATION * iterations)
+    total = sum(n for kind, n in ack_kinds.items() if kind in intended)
+    missing = [kind for kind in intended if not ack_kinds.get(kind)]
+    print("coverage: {} ACKs (minimum {}); ACKed by type: {}".format(
+        total, minimum, ", ".join("{} {}".format(k, ack_kinds.get(k, 0)) for k in intended)))
+    if total < minimum or missing:
+        print("INCONCLUSIVE: the safety checks passed, but the run did not test enough ({}).".format(
+            "; ".join(filter(None, ["only {} ACKs".format(total) if total < minimum else "",
+                                    "never ACKed: " + ", ".join(missing) if missing else ""]))))
+        return 3
+    print("RESULT: PASS")
     return 0
 
 
@@ -370,15 +454,19 @@ class Sync:
         self.replies = queue.Queue()
 
     def on_reply(self, line):
-        parts = line.split(" ", 2)
         try:
-            rid = parts[1]
-            if parts[0] == "ACK":
+            kind, rid, wid, rest = parse_reply(line)
+            if wid != 1:
+                raise ProtocolError("targeted mode only uses writer 1")
+            if kind == "ACK":
                 self.oracle.acked(1, rid)
-            elif parts[0] == "ERR":
-                self.oracle.erred(1, rid, parts[2] if len(parts) > 2 else "")
+            elif kind == "ERR":
+                self.oracle.erred(1, rid, rest)
+                raise ProtocolError("unexpected ERR: {}".format(rest[:120]))
+            else:
+                raise ProtocolError("a reply to a get, but targeted mode never sends get")
         except Exception as exc:
-            self.run.protocol_errors.append("reply {!r}: {}".format(line[:120], exc))
+            self.run.protocol_errors.append("PROTOCOL FAILURE: reply line {!r}: {}".format(line[:200], exc))
         self.replies.put(line)
 
 
@@ -410,6 +498,9 @@ def run_targeted(args):
             if outcome == "FAIL":
                 return 1
     tested = [r for r in results if r[2] != "NOT TESTED"]
+    intended = sorted({r[1] for r in tested})
+    hit = sorted({r[1] for r in tested if r[2] == "PASS"})
+    print("coverage: {} of {} intended pause points hit and killed in every round".format(len(hit), len(intended)))
     print("TARGETED PASS {}/{} (not tested: {})".format(
         sum(1 for r in tested if r[2] == "PASS"), len(tested),
         ", ".join(sorted({r[1] for r in results if r[2] == "NOT TESTED"})) or "none"))

@@ -78,3 +78,10 @@ More entries: to be written from evidence.
 ## 5. If we had 24 more hours
 
 To be written from evidence.
+
+
+## Final fix round (2026-11-07): failures found by an independent audit
+
+The team received an audit of the finished project (the audit file itself is not in the repository). Every claim below was reproduced by us before it was fixed; claims we could not reproduce are marked.
+
+1. **The tester passed engines that tested nothing (audit: Fix 1).** *Reproduced* (`evidence/tester-hardening.txt`, "BEFORE"): with `tester/fake_kvdb.py` in `silent` mode (never replies) and `garbage` mode (prints `GARBAGE OUTPUT`), `torture.py --iterations 5 --seed 4141` printed `PASS 5/5` with 0 ACKs. An `ERR` with a malformed request id crashed the writer threads (`AssertionError`) — the audit saw an `UnboundLocalError` in the reader for a different malformed id; both came from using the id in `tester/modes.py` `make_dispatch` before checking it. `serve` crashed (`ValueError: Exceeds the limit (4300 digits)`) on `1 batch <5,000 digits>`. *Fix:* `parse_reply` accepts only exact reply lines for in-flight ids (digit counts bounded before `int()`); reader and writer thread crashes are reported and FAIL the run; a coverage verdict (`coverage_verdict`) makes a run that tested too little INCONCLUSIVE (exit 3); `kvdb.py` checks the batch count's length before `int()`. Tests: `tests/test_tester.py`.

@@ -46,6 +46,8 @@ Each row is the pause point at that line (row 7 has none). Rows 1–6 and 8–15
 5. **The judge's 200-iteration run took 355.8 s** (`b1513cb`); with the snapshot 152.2 s (`504f994`), kills unchanged.
 6. **Our tooling failed twice:** the mutation check hung (it did not copy `kvdb.py`; a test spun on EOF) and one set of runs never started (a shell word-splitting bug). Fixed in `a2007f3` (test) and `504f994` (tools); the runs were redone.
 
+7. **Found by an independent audit (2026-11-07)** and reproduced by us before fixing (`evidence/tester-hardening.txt`): the tester gave PASS 5/5 to an engine that never answers and to one that prints garbage, and an `ERR` with a bad request id crashed its threads; `serve` itself crashed on a 5,000-digit batch count. Fixed with strict reply parsing, a coverage verdict (INCONCLUSIVE, exit 3) and length checks before `int()`. Further audit findings: `docs/breaking-long-form.md`.
+
 ## 5. If we had 24 more hours
 
 1. **Power loss:** an `F_FULLFSYNC` option, its cost, and real power-cut tests.

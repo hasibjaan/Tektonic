@@ -111,20 +111,31 @@ def next_request(rng, profile, wid, seq, iteration):
 class Writer(threading.Thread):
     """Sends one request, waits for its reply, sends the next — never two in flight."""
 
-    def __init__(self, wid, rng, profile, oracle, child, stop, iteration, seq_start, trace):
+    def __init__(self, wid, rng, profile, oracle, child, stop, iteration, seq_start, trace, kinds=None):
         super().__init__(daemon=True, name="writer-%d" % wid)
         self.wid, self.rng, self.profile = wid, rng, profile
         self.oracle, self.child, self.stop = oracle, child, stop
         self.iteration, self.seq, self.trace = iteration, seq_start, trace
         self.replied = threading.Event()
         self.sent_count = 0
+        self.kinds = kinds                  # request id -> type, for the coverage verdict
+        self.error = None                   # a crash of this thread, as a traceback: a FAIL
 
     def run(self):
+        try:
+            self._loop()
+        except BaseException:               # never die silently: the main thread reports it
+            import traceback
+            self.error = "writer {} thread crashed:\n{}".format(self.wid, traceback.format_exc())
+
+    def _loop(self):
         while not self.stop.is_set():
             self.seq += 1
             rid, request, effects, summary = next_request(self.rng, self.profile, self.wid, self.seq, self.iteration)
             self.replied.clear()
             self.oracle.sent(self.wid, rid.decode(), effects, summary)   # logged BEFORE it is sent
+            if self.kinds is not None:
+                self.kinds[rid.decode()] = summary.split()[0]
             self.trace("SEND {} {} ({} bytes)".format(rid.decode(), summary, len(request)))
             if not self.child.send(request):
                 return                                              # the engine is gone

@@ -253,3 +253,209 @@ I have run sh tools/phase9_offline.sh by switching wifi off and then turning it 
 commit and push
 ~~~~~
 
+### 2026-11-07 04:57:58 · Claude Code · hasib
+~~~~~
+Now tell me what are the things left to do. After that tell me how to start when the judge shows up
+~~~~~
+
+### 2026-11-07 06:27:28 · Claude Code · hasib
+~~~~~
+<pasted_content id="f3be">
+FINAL FIX ROUND. Time now: [HH:MM]. Hours left before judging: [n]. Driver: [name].
+
+An independent audit (saved as docs/audit-2026-11-07.md) reviewed the finished project.
+Fresh results were strong: 500/500 random kills, 51/51 targeted kills, six modes 20/20,
+million-key recovery 1.29 s (batched), shrink to 16 bytes, 6/6 broken formats caught.
+It also found real weaknesses. Fix them in the order below.
+
+OUR DECISIONS — follow these exactly:
+- [DECISION 1] Demo laptop: [macOS — the validated Mac / Windows]
+- [DECISION 2] Judge ruling on the .idx snapshot file, word for word: [paste it, or "not yet asked"]
+- [DECISION 3] Time budget for this round: [n] hours. Stop adding fixes when it runs out.
+
+RULES FOR THIS ROUND
+- Read CLAUDE.md first. All its rules still apply.
+- Do NOT change the on-disk data format, the write order, or the recovery rules unless a
+  step below says so and we type "approved".
+- Never weaken a test, a kill, or a check to make something pass.
+- After EACH fix: run the compile check, check_imports, the full unittest suite, and
+  `torture --iterations 50 --seed <new seed>`. Show real output. One commit per fix.
+- If any fix breaks something that passed before, stop and tell us. Do not "fix forward"
+  blindly.
+- Update BREAKING.md section 4 with every real failure the audit found, as found by the audit.
+
+==============================================================
+FIX 1 — The torture tool can pass without testing anything   [HIGH: torture tool = 15 marks + tie-break]
+==============================================================
+PROBLEM: A fake engine that never ACKs and never stores anything got "PASS 5/5" with zero
+ACKs. Losing un-ACKed writes is legal, so nothing failed — but nothing was really tested.
+Also: a garbage reply line ("GARBAGE OUTPUT") is silently ignored, and an ERR line with a
+bad request id crashes the reply reader with UnboundLocalError inside a background thread,
+so reply tracking can die silently.
+
+FIX:
+a. Add a COVERAGE verdict, separate from the safety verdict. A run is only PASS if:
+   - total ACKs across the run is above a minimum (choose it, explain it, print it);
+   - every intended operation type (put, del, batch) was ACKed at least once in the run;
+   - in targeted mode, every pause point that was meant to be hit was actually hit.
+   Otherwise print INCONCLUSIVE and exit non-zero. Do NOT require an ACK before each
+   individual kill — very early kills are legitimate. Keep kill delays random.
+b. Strict reply parsing: any line that is not exactly a valid ACK / VAL / NOTFOUND / ERR
+   with a known request id is a PROTOCOL FAILURE → FAIL with the line printed.
+c. Fix the ERR-with-unknown-id crash: validate the id before using any variable.
+d. Any exception in a reader or writer thread is passed to the main thread and turns the
+   run into FAIL with the traceback. Never let a thread die silently.
+e. Bound request tokens before int() conversion (a batch count with 5,000 digits must give
+   a clean ERR, not a Python ValueError), in both serve and the tester.
+TESTS: the silent fake engine → INCONCLUSIVE/FAIL; an ACK-but-don't-store engine → FAIL;
+a garbage-output engine → FAIL; the real engine → PASS on two new seeds.
+Save the outputs to evidence/tester-hardening.txt.
+
+==============================================================
+FIX 2 — The .idx snapshot file and the one-file rule        [ELIGIBILITY RISK]
+==============================================================
+PROBLEM: The brief says: "Exactly one data file on disk. A separate lock file or a
+temporary file used during compaction is allowed, but the authoritative state must live in
+one file." Our persistent <path>.idx cache is not in that allowed list. It is rebuildable
+and not authoritative, which is a fair argument — but docs/clarifications.md only says
+"the judges said it was okay to proceed", which proves nothing.
+
+FIX, depending on DECISION 2:
+- If the judge clearly approved the .idx cache: rewrite docs/clarifications.md with the
+  exact question we asked, the exact answer, the judge's name if known, and the time. Say
+  whether .idx.tmp is also covered and whether .idx counts towards max_bytes. Mention it
+  in README and BREAKING.md.
+- If the judge refused, or we have not asked yet: do NOT delete the snapshot code yet.
+  First measure (see Fix 4) the worst open time WITHOUT the cache on this laptop, for
+  1,000,000 single puts AND for 1,000,000 batched keys. Then STOP and give us two options
+  with measured numbers: (A) remove the cache and accept the measured recovery time;
+  (B) move the checkpoint INSIDE the data file as a special committed transaction, with a
+  design, its crash points, and an estimate of the time it needs. Wait for "approved".
+
+==============================================================
+FIX 3 — Locking on the demo platform                        [HIGH if Windows, LOW if Mac]
+==============================================================
+PROBLEM: When fcntl is missing (Windows), _take_lock returns None and open carries on.
+Two DB objects on the same file each think they own the end of the file. Reproduced: two
+handles both returned success, and after reopening only the second write was there — an
+acknowledged write was LOST. Three lock tests fail on Windows. The README says only one
+open is allowed, which is false on Windows.
+
+FIX, depending on DECISION 1:
+- macOS demo: never fail silently. If no supported OS lock exists, open must raise a clear
+  "unsupported platform" error instead of running unprotected. State the supported
+  platforms in README.
+- Windows demo: use msvcrt.locking on the lock file — a lock the operating system releases
+  when the process dies, taken BEFORE recovery runs. Also refuse a second open of the same
+  path inside the same process. Never use a plain "lock file exists" marker; a crash would
+  leave it behind.
+ACCEPTANCE: all lock tests pass on the demo platform; a second open raises DatabaseBusy;
+killing the process releases the lock; the audit's two-handle reproduction cannot lose an
+acknowledged write. Add that reproduction as a permanent test.
+
+==============================================================
+FIX 4 — Recovery under 2 seconds in EVERY crash state         [up to −5 marks]
+==============================================================
+PROBLEM: With the cache, recovery is 1.25 s. Without it, the recorded Mac time for a
+million single puts is 2.889 s. Compaction deletes the old cache BEFORE the swap, so a kill
+at compact.before-swap leaves the full old log with no cache → slow open. A one-byte cut at
+a snapshot boundary, a damaged cache, or a long tail of big values or big batches after
+the last snapshot can also push open past 2 s. Snapshots are taken by transaction count,
+not by bytes, so a tail of large batches is not bounded.
+
+FIX:
+a. Do not delete the old cache before the swap. Remove it only after the new data file is
+   in place. The identity check (Fix 6) must stop an old cache being used with the new file.
+b. Trigger snapshots by bytes and operations since the last snapshot, not only by
+   transaction count, so the replay tail has a bounded size.
+c. Measure on the demo laptop, five runs each, and report the WORST time for: healthy
+   cache; missing cache; damaged cache; a kill during a snapshot write; a kill at
+   compact.before-swap; F4 one-byte cut at a snapshot boundary; a large-value tail; a
+   large-batch tail. Write evidence/recovery-worst-case.md with the hardware, file sizes and
+   cache state. Keep the old benchmark files; do not overwrite them.
+d. If any case is still at or above 1.8 s, STOP and tell us before optimising further.
+
+==============================================================
+FIX 5 — The 200-iteration demo run has almost no time margin  [risk: judge sees an unfinished run]
+==============================================================
+PROBLEM: On the Mac, 200 iterations took 181.05 s and 169.4 s. The slot is about 180 s.
+recovery-crash 100 took 247 s; large-values 100 took 2,272 s because each iteration copies
+and scans an ever-growing multi-gigabyte log.
+
+FIX: profile one iteration and remove waste WITHOUT weakening anything:
+- copy the database for failure evidence only when it is actually needed, or more
+  cheaply (for example only before recovery, and only the files that matter);
+- reduce Python start-up cost where possible;
+- in modes whose file grows without limit, start a fresh database every N iterations and
+  report N in the output and README. That is an honest, documented workload choice —
+  random kills and full-state checks stay exactly the same.
+TARGET: 200 default iterations under 120 s on the demo laptop. Report before and after.
+Never lower the iteration count the judge asks for.
+
+==============================================================
+FIX 6 — A snapshot from another database can be accepted     [LOW: outside normal crashes]
+==============================================================
+PROBLEM: The cache is matched to the data file using only 17 bytes from the last covered
+transaction. Two databases whose last transactions are identical accept each other's
+cache. Reproduced: database B showed database A's first key.
+
+FIX (choose the cheaper, explain why): either store a random database identity created at
+file creation and checked by the cache — only if that does NOT change the data-file format
+we froze; or, if it would, narrow the claim in README and BREAKING.md ("a cache copied from
+another database with an identical final transaction is not detected") and add the audit's
+reproduction as a test that documents the limit. Do not change the data format without
+"approved".
+
+==============================================================
+FIX 7 — Failure evidence must be enough to replay a bug        [torture-tool marks]
+==============================================================
+PROBLEM: save_failure copies the main file and the logs, but not the .idx cache or temp
+files, and SEND records hold summaries, not the full requests.
+FIX: before recovery, save the data file, the cache, and every temp file; save full
+request and response events; save the engine's git commit, Python version and OS, and the
+kill phase. Add `torture --replay <failure-folder>`. Say honestly in README that the seed
+repeats the random choices but not the exact thread timing.
+
+==============================================================
+FIX 8 — Windows test portability                             [ONLY if DECISION 1 = Windows]
+==============================================================
+PROBLEM: tests compare output assuming LF line endings (Windows gives CRLF); one test needs
+signal.SIGKILL (not on Windows); README examples call /bin/sh; the compaction phase
+counter strips only LF, so it reports zero on Windows; only 4 of 60 recovery-crash kills
+landed during recovery (56 landed before Python started).
+FIX: handle CRLF and LF on purpose; use Popen.kill() as the native hard kill; make the
+README command runner work without /bin/sh; fix the phase counter; time recovery-crash
+kills after the engine reports it has started, and report how many kills landed in each
+phase. The UNMODIFIED test suite must pass on the demo platform.
+
+==============================================================
+FIX 9 — Documents: accuracy pass                              [architecture 10 + BREAKING 15 marks]
+==============================================================
+a. Diagram: add the E5 route (the cap is reached → compaction carries the new write →
+   os.replace is the commit point for that write). Export the diagram to PNG and SVG in
+   diagrams/, check it opens with Wi-Fi off, and link the image from ARCHITECTURE.md.
+b. BREAKING.md: render it to PDF or print-preview, count the pages, cut it to TWO. Add the
+   E5 alternate commit route and the failure after the swap to the ordering argument.
+c. README "Errors": say that in the E5 path the file can be replaced successfully and then
+   reopening can fail, so DatabaseFailed can be returned even though the change IS on disk.
+d. README "Measured results": show the LATEST numbers (181.05 s and 169.4 s for 200
+   iterations, then the new ones after Fix 5), not the old 152.2 s run.
+e. Any claim based on test_every_cut_of_a_large_value: say it samples cuts through a
+   100,000-byte value; it does not cut every byte of a 1 MB value.
+f. Every proof row and crash point touched by Fixes 1–8: re-check against the final code.
+   Then pick 6 rows at random and confirm each against the code. List mismatches and fix.
+
+==============================================================
+FINAL CHECK — when the fixes are done or the time budget runs out
+==============================================================
+1. Fresh clone into a NEW folder, Wi-Fi off. Build with the README command. check_imports.
+   Full unittest suite.
+2. With seeds we have never used: torture 500; torture 200 (timed); every mode at the
+   iteration count the judge's commands use; targeted mode.
+3. Report: passed / failed / not done for every fix above, with real output. List anything
+   still open by scenario ID. No "fully verified" or "first prize" claims.
+4. Propose the final commit and the exact commit hash for the judge. STOP.
+Displaying FINAL_FIX_PROMPT.md.
+</pasted_content id="f3be">
+~~~~~
+

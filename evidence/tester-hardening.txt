@@ -1,0 +1,127 @@
+# Fix 1 (final fix round): the torture tool must not pass a run that tested nothing.
+# Captured 2026-11-07 06:36:01 IST, macOS 15.8.1, python3 3.13.9
+
+## BEFORE the fix (code at commit 9d1a371, plus the new fake modes)
+===== BEFORE the fix: FAKE_KVDB_MODE=silent python3 torture.py --iterations 5 --seed 4141 --kvdb tester/fake_kvdb.py
+torture: mode default seed 4141 iterations 5 writers 3 kvdb tester/fake_kvdb.py
+iter    1 seed 4141 kill_ms   74.2 in_flight 3 acks      0 keys     0 PASS (0.28 s)
+iter    2 seed 4141 kill_ms  254.1 in_flight 3 acks      0 keys     0 PASS (0.46 s)
+iter    3 seed 4141 kill_ms  302.7 in_flight 3 acks      0 keys     0 PASS (0.52 s)
+iter    4 seed 4141 kill_ms  215.6 in_flight 3 acks      0 keys     0 PASS (0.43 s)
+iter    5 seed 4141 kill_ms  127.4 in_flight 3 acks      0 keys     0 PASS (0.34 s)
+PASS 5/5
+kills with at least one request in flight: 5/5 (100.0%)
+average iteration 0.41 s; projected 200 iterations: 82 s
+exit=0
+===== BEFORE the fix: FAKE_KVDB_MODE=garbage python3 torture.py --iterations 5 --seed 4141 --kvdb tester/fake_kvdb.py
+torture: mode default seed 4141 iterations 5 writers 3 kvdb tester/fake_kvdb.py
+iter    1 seed 4141 kill_ms   74.2 in_flight 3 acks      0 keys     0 PASS (0.30 s)
+iter    2 seed 4141 kill_ms  254.1 in_flight 3 acks      0 keys     0 PASS (0.49 s)
+iter    3 seed 4141 kill_ms  302.7 in_flight 3 acks      0 keys     0 PASS (0.53 s)
+iter    4 seed 4141 kill_ms  215.6 in_flight 3 acks      0 keys     0 PASS (0.41 s)
+iter    5 seed 4141 kill_ms  127.4 in_flight 3 acks      0 keys     0 PASS (0.34 s)
+PASS 5/5
+kills with at least one request in flight: 5/5 (100.0%)
+average iteration 0.41 s; projected 200 iterations: 82 s
+exit=0
+===== BEFORE the fix: FAKE_KVDB_MODE=bad-err-id python3 torture.py --iterations 5 --seed 4141 --kvdb tester/fake_kvdb.py
+Exception in thread writer-1:
+Exception in thread writer-2:
+Exception in thread writer-3:
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/threading.py", line 1043, in _bootstrap_inner
+    self.run()
+    ~~~~~~~~^^
+exit=1
+===== BEFORE the fix: FAKE_KVDB_MODE=ack python3 torture.py --iterations 5 --seed 4141 --kvdb tester/fake_kvdb.py
+torture: mode default seed 4141 iterations 5 writers 3 kvdb tester/fake_kvdb.py
+iter    1 seed 4141 kill_ms   74.2 in_flight 3 acks    601 keys     0 FAIL (0.28 s)
+FAIL at iteration 1 (seed 4141, mode default):
+  writer 1: the dump matches none of the 2 allowed state(s)
+    unanswered request: w1-200 (allowed: fully applied or fully absent)
+    key w1k0: expected w1.s195.o0.i1.d162c09d363f7225f but found <absent>  (operation ids: w1-195, w1-200)
+    key w1k10: expected w1.s183.o4.i1.bc9f639083f60 but found <absent>  (operation ids: w1-183, w1-200)
+    key w1k12: expected w1.s199.o3.i1.5f0f but found <absent>  (operation ids: w1-199, w1-200)
+    key w1k15: expected w1.s199.o4.i1.1a9b4 but found <absent>  (operation ids: w1-199, w1-200)
+exit=1
+
+## Also before: serve crashed on a 5,000-digit batch count (kvdb.py at 9d1a371)
+ValueError: Exceeds the limit (4300 digits) for integer string conversion — the whole serve process exited.
+
+## AFTER the fix
+===== AFTER the fix: FAKE_KVDB_MODE=silent python3 torture.py --iterations 5 --seed 4141 --kvdb tester/fake_kvdb.py
+torture: mode default seed 4141 iterations 5 writers 3 kvdb tester/fake_kvdb.py
+iter    1 seed 4141 kill_ms   74.2 in_flight 3 acks      0 keys     0 PASS (0.28 s)
+iter    2 seed 4141 kill_ms  254.1 in_flight 3 acks      0 keys     0 PASS (0.47 s)
+iter    3 seed 4141 kill_ms  302.7 in_flight 3 acks      0 keys     0 PASS (0.52 s)
+iter    4 seed 4141 kill_ms  215.6 in_flight 3 acks      0 keys     0 PASS (0.41 s)
+iter    5 seed 4141 kill_ms  127.4 in_flight 3 acks      0 keys     0 PASS (0.32 s)
+PASS 5/5
+kills with at least one request in flight: 5/5 (100.0%)
+exit=3
+===== AFTER the fix: FAKE_KVDB_MODE=garbage python3 torture.py --iterations 5 --seed 4141 --kvdb tester/fake_kvdb.py
+torture: mode default seed 4141 iterations 5 writers 3 kvdb tester/fake_kvdb.py
+iter    1 seed 4141 kill_ms   74.2 in_flight 3 acks      0 keys     0 FAIL (0.27 s)
+FAIL at iteration 1 (seed 4141, mode default):
+  PROTOCOL FAILURE: reply line 'GARBAGE OUTPUT': not a reply line
+  PROTOCOL FAILURE: reply line 'GARBAGE OUTPUT': not a reply line
+  PROTOCOL FAILURE: reply line 'GARBAGE OUTPUT': not a reply line
+saved: .torture-work/fx-fail/seed-4141-iter-1
+exit=1
+===== AFTER the fix: FAKE_KVDB_MODE=bad-err-id python3 torture.py --iterations 5 --seed 4141 --kvdb tester/fake_kvdb.py
+torture: mode default seed 4141 iterations 5 writers 3 kvdb tester/fake_kvdb.py
+iter    1 seed 4141 kill_ms   74.2 in_flight 3 acks      0 keys     0 FAIL (0.28 s)
+FAIL at iteration 1 (seed 4141, mode default):
+  PROTOCOL FAILURE: reply line 'ERR w1-1x nope': malformed request id 'w1-1x'
+  PROTOCOL FAILURE: reply line 'ERR w2-1x nope': malformed request id 'w2-1x'
+  PROTOCOL FAILURE: reply line 'ERR w3-1x nope': malformed request id 'w3-1x'
+saved: .torture-work/fx-fail/seed-4141-iter-1
+exit=1
+===== AFTER the fix: FAKE_KVDB_MODE=ack python3 torture.py --iterations 5 --seed 4141 --kvdb tester/fake_kvdb.py
+torture: mode default seed 4141 iterations 5 writers 3 kvdb tester/fake_kvdb.py
+iter    1 seed 4141 kill_ms   74.2 in_flight 3 acks    558 keys     0 FAIL (0.29 s)
+FAIL at iteration 1 (seed 4141, mode default):
+  writer 1: the dump matches none of the 2 allowed state(s)
+  writer 2: the dump matches none of the 2 allowed state(s)
+  writer 3: the dump matches none of the 2 allowed state(s)
+saved: .torture-work/fx-fail/seed-4141-iter-1
+exit=1
+
+===== real engine: python3 torture.py --iterations 50 --seed 515001
+safety: PASS 50/50 (no broken promise found)
+kills with at least one request in flight: 50/50 (100.0%)
+average iteration 0.89 s; projected 200 iterations: 178 s
+coverage: 18893 ACKs (minimum 100); ACKed by type: put 9466, del 3717, batch 5710
+RESULT: PASS
+exit=0
+===== real engine: python3 torture.py --iterations 20 --seed 515002
+safety: PASS 20/20 (no broken promise found)
+kills with at least one request in flight: 20/20 (100.0%)
+average iteration 0.83 s; projected 200 iterations: 166 s
+coverage: 7712 ACKs (minimum 40); ACKed by type: put 3903, del 1536, batch 2273
+RESULT: PASS
+exit=0
+===== targeted: python3 torture.py --iterations 1 --seed 515003 --mode targeted
+coverage: 17 of 17 intended pause points hit and killed in every round
+TARGETED PASS 17/17 (not tested: snapshot.after-swap, snapshot.before-swap)
+exit=0
+===== serve with a 5,000-digit batch count (fixed kvdb.py)
+ERR 1 BadToken: batch needs a count from 1 to 10000
+ACK 2
+exit=0
+
+===== AFTER the fix, full output (the capture above was cut at 8 lines): FAKE_KVDB_MODE=silent python3 torture.py --iterations 5 --seed 4141 --kvdb tester/fake_kvdb.py
+torture: mode default seed 4141 iterations 5 writers 3 kvdb tester/fake_kvdb.py
+iter    1 seed 4141 kill_ms   74.2 in_flight 3 acks      0 keys     0 PASS (0.28 s)
+iter    2 seed 4141 kill_ms  254.1 in_flight 3 acks      0 keys     0 PASS (0.46 s)
+iter    3 seed 4141 kill_ms  302.7 in_flight 3 acks      0 keys     0 PASS (0.50 s)
+iter    4 seed 4141 kill_ms  215.6 in_flight 3 acks      0 keys     0 PASS (0.41 s)
+iter    5 seed 4141 kill_ms  127.4 in_flight 3 acks      0 keys     0 PASS (0.32 s)
+safety: PASS 5/5 (no broken promise found)
+kills with at least one request in flight: 5/5 (100.0%)
+average iteration 0.39 s; projected 200 iterations: 79 s
+coverage: 0 ACKs (minimum 20); ACKed by type: put 0, del 0, batch 0
+INCONCLUSIVE: the safety checks passed, but the run did not test enough (only 0 ACKs; never ACKed: put, del, batch).
+exit=3

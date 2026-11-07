@@ -12,8 +12,9 @@ the same Python (sys.executable). Kills are Popen.kill() — SIGKILL on macOS an
 Linux — after a random delay in milliseconds from random.Random(seed). This
 program never imports the engine (tools/check_imports.py proves it).
 
-Exit codes: 0 every iteration passed · 1 a failure (details saved under
-evidence/failures/) · 2 usage error.
+Exit codes: 0 PASS (every iteration passed AND the run tested enough) · 1 FAIL
+(details saved under evidence/failures/) · 2 usage error · 3 INCONCLUSIVE (no
+safety failure, but too few ACKs or a request type never ACKed).
 """
 import argparse
 import os
