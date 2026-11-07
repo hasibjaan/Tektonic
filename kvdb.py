@@ -20,7 +20,6 @@ ours, corrupt or failed).
 This is the only place where text is turned into bytes; the engine sees bytes only.
 """
 import argparse
-import concurrent.futures
 import os
 import re
 import sys
@@ -206,6 +205,7 @@ class Server:
             self.reply(b"ERR", rid, one_line(exc))
 
     def serve(self, inp, workers=4):
+        import concurrent.futures                      # only serve needs it: keeps the other commands fast
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
         try:
             while True:

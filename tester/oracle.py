@@ -93,6 +93,13 @@ class Oracle:
         with self.lock:
             return sum(1 for m in self.models.values() if m.pending is not None)
 
+    def fresh_database(self):
+        """The tester deleted the database file: every writer's truth is now 'empty'."""
+        with self.lock:
+            for m in self.models.values():
+                m.state, m.last_op, m.pending = {}, {}, None
+            self.note("FRESH DATABASE")
+
     def expected_keys(self):
         with self.lock:
             return sum(len(m.state) for m in self.models.values())
@@ -231,6 +238,13 @@ class OverlapOracle:
     def in_flight(self):
         with self.lock:
             return sum(1 for r in self.pending.values() if r is not None)
+
+    def fresh_database(self):
+        """The tester deleted the database file: every key is absent again."""
+        with self.lock:
+            self.state, self.ops = {}, {}
+            self.pending = {w: None for w in self.pending}
+            self.note("FRESH DATABASE")
 
     def verify(self, dump):
         problems = []

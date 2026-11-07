@@ -34,7 +34,7 @@ Each row is the pause point at that line (row 7 has none). Rows 1–6 and 8–14
 3. **Our tests cannot see a missing fsync:** it is the one planted bug that survives (`evidence/engine-mutation-check-phase7.txt`).
 4. **Compaction stops the world,** and under a tight `--max-bytes` E5 may compact on nearly every write; compaction of 1,000,000 live keys is NOT measured.
 5. **Platform and margins:** only macOS and Linux are supported — elsewhere `open` refuses with `UnsupportedPlatform`; only macOS was tested; `check` takes no lock.
-6. **Torture time (clean clone):** 200 iterations took **181.1 s** of about 180 s; `large-values` took **38 min** for 100, as the file grew to 4.2 GB and each iteration copies and re-reads it (`evidence/final-runs.md`).
+6. **Torture time:** 200 default iterations take **126.2 s** after Fix 5 (181.1 s before) — inside the judge's ~180 s but not our 120 s target; modes that grow their file now start a fresh database every N iterations (N printed, `--fresh-every`), so a run no longer accumulates one long history (`evidence/fix5-torture-timing.md`).
 
 ## 4. What we tried that failed
 
@@ -42,7 +42,7 @@ Each row is the pause point at that line (row 7 has none). Rows 1–6 and 8–14
 2. **A second open could cut a write in progress.** Found by reading `recovery.recover` (written down in `5683dc4`), reproduced against a lock-free copy: 14 bytes cut (`evidence/weakness4-without-lock.txt`). Fixed by the `flock` lock (`293d216`).
 3. **The tester crashed instead of failing** on a fake engine. Found by the fake-engine proof (`2ded156`, run 1 kept). Fixed in the first committed tester (`6111eb5`).
 4. **Tests that could not see bugs,** found by planting each bug in a copy: trusting a length (`1466f12`), a skipped snapshot CRC (`3f54581`), a cap off-by-one and a stale snapshot hidden by E5 (`a2007f3`). Each now has a stronger test.
-5. **The judge's 200-iteration run took 355.8 s** (`b1513cb`); with the snapshot 152.2 s (`504f994`), kills unchanged.
+5. **The judge's 200-iteration run took 355.8 s** (`b1513cb`), 152.2 s with the later-removed cache, and 181.1 s in the clean clone; Fix 5 (fresh database every N iterations, check and dump together, a lazy import) made it 126.2 s, kills unchanged.
 6. **Our tooling failed twice:** the mutation check hung (it did not copy `kvdb.py`; a test spun on EOF) and one set of runs never started (a shell word-splitting bug). Fixed in `a2007f3` (test) and `504f994` (tools); the runs were redone.
 
 7. **Found by an independent audit (2026-11-07)** and reproduced by us before fixing (`evidence/tester-hardening.txt`): the tester gave PASS 5/5 to an engine that never answers and to one that prints garbage, and an `ERR` with a bad request id crashed its threads; `serve` itself crashed on a 5,000-digit batch count. Fixed with strict reply parsing, a coverage verdict (INCONCLUSIVE, exit 3) and length checks before `int()`. Further audit findings: `docs/breaking-long-form.md`.

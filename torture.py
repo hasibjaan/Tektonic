@@ -38,6 +38,9 @@ def build_parser():
     p.add_argument("--kvdb", default=os.path.join(REPO, "kvdb.py"), help="path to kvdb.py")
     p.add_argument("--workdir", default=os.path.join(REPO, ".torture-work"),
                    help="work folder on the real disk, never /tmp [.torture-work]")
+    p.add_argument("--fresh-every", type=int, default=None,
+                   help="start a fresh, empty database every N iterations; 0 = never "
+                        "[mode default: 25 default/overlap, 10 large-batches, 5 large-values, 0 others]")
     p.add_argument("--keys", type=int, default=1_000_000, help="scale mode: distinct keys [1000000]")
     p.add_argument("--build", choices=["single", "batches"], default="single",
                    help="scale mode: one transaction per key, or batches of 10,000 [single]")

@@ -16,7 +16,7 @@ class Profile:
     def __init__(self, name, writers=3, keys_per_writer=16, p_put=0.5, p_del=0.2,
                  batch_sizes=(2, 10), tail=(0, 40), p_big_value=0.0, delay_ms=(10, 400),
                  p_compact=0.0, prefill=0, max_bytes=0, allowed_errors=(), shared_keys=0,
-                 restart_kills=0, restart_ms=(0, 0)):
+                 restart_kills=0, restart_ms=(0, 0), fresh_every=0):
         self.name = name
         self.writers = writers
         self.keys_per_writer = keys_per_writer
@@ -33,18 +33,21 @@ class Profile:
         self.shared_keys = shared_keys      # overlap: all writers use these keys
         self.restart_kills = restart_kills  # recovery-crash: extra kills of a restarted serve
         self.restart_ms = restart_ms        # ...after this many ms from its start
+        self.fresh_every = fresh_every      # start a fresh, empty database every N iterations (0 = never)
 
 
 PROFILES = {
-    "default": Profile("default"),
-    "large-values": Profile("large-values", p_big_value=0.35, delay_ms=(20, 600)),
+    # fresh_every: modes whose file grows without limit start a fresh database every N
+    # iterations (final fix round, Fix 5); kills and full-state checks are unchanged.
+    "default": Profile("default", fresh_every=25),
+    "large-values": Profile("large-values", p_big_value=0.35, delay_ms=(20, 600), fresh_every=5),
     "large-batches": Profile("large-batches", p_put=0.2, p_del=0.1, batch_sizes=(1000, 10_000),
-                             keys_per_writer=64, delay_ms=(20, 800)),
+                             keys_per_writer=64, delay_ms=(20, 800), fresh_every=10),
     "compaction": Profile("compaction", keys_per_writer=800, p_put=0.45, p_del=0.15, p_compact=0.12,
                           batch_sizes=(10, 200), delay_ms=(50, 700)),
     "recovery-crash": Profile("recovery-crash", prefill=100_000, restart_kills=3, restart_ms=(60, 220)),
     "disk-full": Profile("disk-full", max_bytes=4 * 1024, tail=(0, 220), allowed_errors=("SizeCapReached",)),
-    "overlap": Profile("overlap", shared_keys=8, p_put=0.7, p_del=0.3),
+    "overlap": Profile("overlap", shared_keys=8, p_put=0.7, p_del=0.3, fresh_every=25),
 }
 
 

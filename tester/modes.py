@@ -158,15 +158,35 @@ def run_cli(kvdb, *args):
     return r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
 
 
-def read_back(kvdb, db):
-    """open, then check, then dump --hex. Returns (dump dict, None) or (None, problem)."""
+def read_back(kvdb, db, phases=None):
+    """open, then check and dump --hex. Returns (dump dict, None) or (None, problem).
+
+    open runs first and alone: it is the step that repairs the file. check and dump
+    --hex only read the file open has just made clean, so they run at the same time
+    (Fix 5: saves one process start per iteration). All three must succeed.
+    phases: an optional dict that collects the seconds each step took."""
+    env = dict(os.environ)
+    env.pop("KVDB_PAUSE_AT", None)
+    t0 = time.perf_counter()
     code, out, err = run_cli(kvdb, "open", db)
+    if phases is not None:
+        phases["open"] = phases.get("open", 0.0) + time.perf_counter() - t0
     if code != 0:
         return None, "open failed (exit {}): {} {}".format(code, out.strip(), err.strip()[-300:])
-    code, out, err = run_cli(kvdb, "check", db)
+    t0 = time.perf_counter()
+    procs = {name: subprocess.Popen([sys.executable, kvdb] + args, env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+             for name, args in (("check", ["check", db]), ("dump", ["dump", db, "--hex"]))}
+    results = {}
+    for name, proc in procs.items():
+        out_b, err_b = proc.communicate(timeout=TIMEOUT * 5)
+        results[name] = (proc.returncode, out_b.decode("utf-8", "replace"), err_b.decode("utf-8", "replace"))
+    if phases is not None:
+        phases["check + dump (together)"] = phases.get("check + dump (together)", 0.0) + time.perf_counter() - t0
+    code, out, err = results["check"]
     if code != 0 or out.strip() != "OK":
         return None, "check after open is not OK (exit {}): {}".format(code, out.strip())
-    code, out, err = run_cli(kvdb, "dump", db, "--hex")
+    code, out, err = results["dump"]
     if code != 0:
         return None, "dump --hex failed (exit {}): {}".format(code, out.strip()[:300])
     dump = {}
@@ -307,6 +327,8 @@ def kill_phase(child):
 def run_random(args):
     profile = PROFILES[args.mode]
     profile.writers = args.writers
+    if getattr(args, "fresh_every", None) is not None:
+        profile.fresh_every = args.fresh_every
     run = Run(args, args.mode)
     run.err_counts = {}
     run.sent_kinds = {}                                   # request id -> put / del / batch / compact
@@ -325,8 +347,11 @@ def run_random(args):
     passes = with_inflight = in_compaction = 0
     phases = {"before-start": 0, "during-recovery": 0, "after-ready": 0}
     times = []
+    cost = collections.Counter()                          # seconds spent per phase, whole run
     print("torture: mode {} seed {} iterations {} writers {} kvdb {}".format(
         args.mode, args.seed, args.iterations, profile.writers, os.path.relpath(run.kvdb, REPO)))
+    print("fresh database every {} iterations".format(profile.fresh_every) if profile.fresh_every
+          else "one database for the whole run")
     if profile.max_bytes:                                 # disk-full: the cap is set at creation
         code, out, err = run_cli(run.kvdb, "open", db, "--max-bytes", str(profile.max_bytes))
         print("created the database with --max-bytes {}: {}".format(profile.max_bytes, out.strip()))
@@ -337,12 +362,19 @@ def run_random(args):
         print("prefilled {:,} keys through serve (writer 0, ACKed batches)".format(profile.prefill))
     for it in range(1, args.iterations + 1):
         started = time.monotonic()
+        if profile.fresh_every and it > 1 and (it - 1) % profile.fresh_every == 0:
+            for name in (db, db + ".lock", db + ".compact.tmp"):       # nothing is running: serve was killed
+                if os.path.exists(name):
+                    os.remove(name)
+            oracle.fresh_database()
+            run.trace("FRESH DATABASE before iteration {}".format(it))
         delay = master.uniform(*profile.delay_ms)
         rngs = {w: random.Random(master.getrandbits(64)) for w in seqs}
         restarts = [master.uniform(*profile.restart_ms) for _ in range(profile.restart_kills)]
         writers_by_id = {}
         stop = threading.Event()
         oracle.note("ITERATION {} kill_delay_ms {:.1f}".format(it, delay))
+        mark = time.perf_counter()
         child = Child(run.kvdb, db, make_dispatch(oracle, writers_by_id, run, profile.allowed_errors))
         try:
             child.wait_stderr("READY")
@@ -352,26 +384,33 @@ def run_random(args):
         for w in seqs:
             writers_by_id[w] = Writer(w, rngs[w], profile, oracle, child, stop, it, seqs[w], run.trace,
                                       kinds=run.sent_kinds)
+        cost["serve start until READY"] += time.perf_counter() - mark
         for wr in writers_by_id.values():
             wr.start()
+        mark = time.perf_counter()
         time.sleep(delay / 1000.0)
+        cost["random kill delay (writes in flight)"] += time.perf_counter() - mark
+        mark = time.perf_counter()
         code = child.kill()                               # the hard kill, writes in flight
         stop.set()
         for wr in writers_by_id.values():
             wr.join(timeout=TIMEOUT)
             seqs[wr.wid] = wr.seq
+        cost["kill + drain + join writers"] += time.perf_counter() - mark
         compact_lines = [l for l in child.stderr_lines if l.startswith("COMPACT")]
         compacting = bool(compact_lines) and compact_lines[-1] == "COMPACT begin"
         in_compaction += compacting
         in_flight = oracle.in_flight()
         with_inflight += in_flight > 0
         run.trace("KILL iteration {} exit {} in_flight {} compacting {}".format(it, code, in_flight, compacting))
+        mark = time.perf_counter()
         after_kill = os.path.join(run.dir, "db-after-kill.kv")
         if os.path.exists(db):                            # a broken engine may never create the file
             shutil.copyfile(db, after_kill)
         else:
             after_kill = None
             run.trace("no database file after the kill")
+        cost["copy of the database (failure evidence)"] += time.perf_counter() - mark
         extra = ""
         for ms in restarts:                               # recovery-crash: kill serve WHILE it opens
             again = Child(run.kvdb, db, lambda line: None)
@@ -381,11 +420,16 @@ def run_random(args):
             phases[phase] += 1
             extra += " " + {"before-start": "s", "during-recovery": "R", "after-ready": "a"}[phase]
             run.trace("RESTART-KILL after {:.1f} ms: {}".format(ms, phase))
-        dump, problem = read_back(run.kvdb, db)
+        rb = {}
+        dump, problem = read_back(run.kvdb, db, rb)
+        for name, secs in rb.items():
+            cost["kvdb.py " + name] += secs
+        mark = time.perf_counter()
         thread_errors = child.errors + [w.error for w in writers_by_id.values() if w.error]
         problems = (list(run.protocol_errors) + thread_errors) or ([problem] if problem else oracle.verify(dump))
         if not problems and profile.max_bytes and os.path.getsize(db) > profile.max_bytes:
             problems = ["file is {} bytes, over max_bytes {}".format(os.path.getsize(db), profile.max_bytes)]
+        cost["oracle comparison"] += time.perf_counter() - mark
         seconds = time.monotonic() - started
         times.append(seconds)
         status = "FAIL" if problems else "PASS"
@@ -410,6 +454,8 @@ def run_random(args):
     if run.err_counts:
         print("ERR replies by reason: " + ", ".join("{} {}".format(k, v) for k, v in sorted(run.err_counts.items())))
     print("average iteration {:.2f} s; projected 200 iterations: {:.0f} s".format(avg, 200 * avg))
+    print("time per iteration by phase: " + ", ".join(
+        "{} {:.0f} ms".format(name, 1000 * secs / args.iterations) for name, secs in cost.most_common()))
     return coverage_verdict(profile, args.iterations, run.ack_kinds)
 
 
