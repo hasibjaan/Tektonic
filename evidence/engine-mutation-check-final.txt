@@ -1,0 +1,20 @@
+# captured 2026-11-07 08:10:56 IST, commit b629262 (final fix round: no index cache)
+$ python3 tools/mutation_check_engine.py
+CAUGHT   recovery cuts one byte too little: FAILED (errors=23)
+CAUGHT   recovery does not restore the trailer: FAILED (errors=4)
+CAUGHT   recovery truncates instead of refusing corruption: FAILED (failures=2)
+CAUGHT   writer trusts the file position (no seek to E): FAILED (failures=53, errors=21)
+CAUGHT   rollback does not truncate: FAILED (failures=1, errors=1)
+CAUGHT   size cap off by one: FAILED (failures=3)
+CAUGHT   index applied as put for a delete: FAILED (failures=11, errors=1)
+CAUGHT   fast path skips the crc32 check: FAILED (failures=1)
+CAUGHT   fast path skips the trailer check: FAILED (failures=1)
+CAUGHT   no database lock: FAILED (failures=4)
+CAUGHT   compaction deletes the original before the swap: FAILED (errors=2)
+CAUGHT   compaction skips validating the new file: FAILED (failures=1)
+CAUGHT   compacted file loses max_bytes: FAILED (errors=1)
+CAUGHT   E5 refuses instead of compacting: FAILED (errors=3)
+CAUGHT   leftover .compact.tmp not removed at open: FAILED (failures=3)
+SURVIVED commit fsync removed (step 6) (EXPECTED: a process kill cannot see this): OK
+0 unexpected survivor(s) or skip(s)
+exit=0
