@@ -151,7 +151,11 @@ class CutTest(unittest.TestCase):
                         self.assertIsNone(d.ops)                    # never a record
                         self.assertLessEqual(d.offset, cut)         # points inside the input, never past it
 
-    def test_every_cut_of_a_large_value(self):
+    def test_sampled_cuts_of_a_100000_byte_value(self):
+        """SAMPLED, not every cut: every cut in the first 40 bytes (headers), then every
+        997th byte through the 100,000-byte value, then the last torn length. Each one
+        must be INCOMPLETE (torn), never a record. (Renamed in the final fix round: the
+        old name said 'every cut'.)"""
         full = L.encode_txn([(PUT, b"big", b"x" * 100_000)])
         for cut in list(range(0, 40)) + list(range(40, len(full) - 1, 997)) + [len(full) - 2]:
             with self.subTest(cut=cut):

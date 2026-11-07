@@ -268,6 +268,52 @@ class CapTest(unittest.TestCase):
             self.assertLessEqual(os.path.getsize(path), cap)
 
 
+class E5FailureAfterSwapTest(unittest.TestCase):
+    """Final fix round, Fix 9: on the E5 path os.replace is the write's commit point.
+    A failure AFTER it returns DatabaseFailed although the write IS on disk (allowed by
+    rule 2: no success was returned); a failure AT it leaves the old file and no write.
+    Errors are injected with unittest.mock: a real failing folder fsync was not produced."""
+
+    def _full(self, path):
+        cap = 16 + 20 * 47                                     # exactly 20 puts of key 10 + value 10
+        db, _ = open_db(path, max_bytes=cap)
+        for i in range(20):
+            db.put(b"key%07d" % i, b"val%07d" % i)
+        return db
+
+    def test_folder_fsync_fails_after_the_swap(self):
+        from unittest import mock
+        from src.kv import DatabaseFailed
+        with WorkDir() as w:
+            path = w.path("db.kv")
+            db = self._full(path)
+            with mock.patch.object(recovery, "fsync_dir", side_effect=OSError(5, "injected")):
+                with self.assertRaises(DatabaseFailed):
+                    db.put(b"key0000003", b"NEW0000003")      # does not fit: E5 compacts WITH it
+            with self.assertRaises(DatabaseFailed):
+                db.put(b"key0000004", b"x")                  # refused until reopen
+            db.close()
+            self.assertFalse(os.path.exists(path + TMP))
+            self.assertEqual(check(path), (True, "OK"))
+            after = state_of(path)
+            self.assertEqual(after[b"key0000003"], b"NEW0000003")   # the change IS on disk
+            self.assertEqual(len(after), 20)
+
+    def test_the_swap_itself_fails(self):
+        from unittest import mock
+        from src.kv import DatabaseFailed
+        with WorkDir() as w:
+            path = w.path("db.kv")
+            db = self._full(path)
+            before = read_bytes(path)
+            with mock.patch("src.kv.db.os.replace", side_effect=OSError(5, "injected")):
+                with self.assertRaises(DatabaseFailed):
+                    db.put(b"key0000003", b"NEW0000003")
+            db.close()
+            self.assertEqual(read_bytes(path), before)             # the original, byte for byte
+            self.assertEqual(state_of(path)[b"key0000003"], b"val0000003")   # the write is absent
+
+
 class ShrinkTest(unittest.TestCase):
     def test_puts_then_deletes_then_compact_is_empty(self):          # the brief's shrink test, small
         with WorkDir() as w:

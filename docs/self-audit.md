@@ -46,3 +46,40 @@ For each one, every claim (disk state, mechanism, file and function, line, test)
 | Crash 14 | `db.py:288` | `db.py:285-289` | Match |
 
 **Summary:** 10 items, 7 match, 3 documentation mismatches fixed (two stale, one imprecise). No code was wrong.
+
+---
+
+# Final fix round self-audit (2026-11-07, Fix 9f)
+
+**Part 1 — every proof row and crash point touched by Fixes 1–8.** Fix 2 removed the index cache, Fix 3 added `UnsupportedPlatform`, Fix 7 changed only the tester. Checked: all 14 crash points in BREAKING.md §1 (line numbers compared with `grep -n 'pause("'` on `src/kv/db.py` and `src/kv/recovery.py` at commit `8989220`), and ARCHITECTURE rows A7, B6, C3, C5, E4, E5 and F3 plus the text below the table.
+
+**Part 2 — six rows at random:**
+
+```
+python3 -c "import random, re; rows = [l.split('|')[1].strip() for l in open('ARCHITECTURE.md', encoding='utf-8') if re.match(r'\| [A-G]\d+ \|', l)]; r = random.Random(20261107); print(len(rows), sorted(r.sample(rows, 6)))"
+-> 32 ['A2', 'A5', 'C2', 'E1', 'E2', 'E3']
+```
+
+For each row, every named test was looked up (`grep -F "def <name>"` in the file that holds the class), four of them were run (`tests.test_crash.WriteKillTest.test_put`, `tests.test_db.FiveCutTest.test_five_cuts`, `tests.test_crash.OpenKillTest.test_kill_during_recovery_twice`, `tests.test_compact.CapTest.test_e2_batch_over_the_cap`: `Ran 4 tests ... OK`), and every evidence file was opened.
+
+| Item | Claim checked | Code / file read | Result |
+|---|---|---|---|
+| BREAKING §1 rows 1–14 | pause point at each named line | `grep -n 'pause("'`: recovery.py 216, 266, 273, 276, 279; db.py 154, 177, 184, 186, 188, 190, 192, 199, 252, 281, 283, 292; `_rollback` truncate at db.py:313 | Match (all 14) |
+| BREAKING §1 row 3 | "the first `len(chunks) // 2` body chunks" | `db.py:181-185` (`middle = len(chunks) // 2`, pause before chunk `middle`) | Match |
+| Row A7 | `CutTest.test_every_cut_of_a_large_value` | `tests/test_layout.py` | **Mismatch 9 (name overclaims):** the test SAMPLES cuts (first 40 bytes, then every 997th, through a 100,000-byte value). Renamed `test_sampled_cuts_of_a_100000_byte_value` with a docstring; ARCHITECTURE row says "sampled" |
+| Row B6 | "B6 itself not re-measured after the cache was removed" | `evidence/recovery-worst-case.txt` (Fix 4c) | **Mismatch 10 (stale):** measured, 2.481 s after single puts (NOT met), 1.438 s after batches. Fixed |
+| Row C3 | `test_kill_at_every_compaction_pause_point`, `test_stale_complete_temp_file_is_never_trusted`, seeds 3131 / 7701 | `tests/test_compact.py`; `evidence/torture/run-compaction-100-seed-7701.txt` (PASS 100/100, 80/100 during a compaction) | Match. Note: the torture runs ran Phase 7 code (with the cache); final-code runs are in the final check |
+| Row C5 | open deletes `<path>.compact.tmp` and an old `<path>.idx` | `recovery.py` `recover` step 3a; `tests/test_db.py` `OneDataFileTest` | Match |
+| Row E4 | over-cap compaction refused before a temp file exists | `db.py` `_commit_by_compaction`, `DB.compact` | Match (fixed in Phase 8, unchanged) |
+| Row E5 | os.replace is the commit point | `db.py` `_compact_locked` steps 6–9 | **Mismatch 11 (missing case):** a failure AFTER the swap returns `DatabaseFailed` although the write is on disk; no test and no document said so. Added `tests/test_compact.py` `E5FailureAfterSwapTest` (2 tests, injected errors) and text in README Errors, BREAKING §2 and this row |
+| Row F3 | NOT MET for single puts, 2.423 s | `evidence/no-cache-timing.txt` | Match |
+| Text under the table | "`DB._compact_locked`, `snapshot.write`"; "`tests/test_snapshot.py`"; header "(… compaction or snapshot)" | `src/kv/snapshot.py`, `tests/test_snapshot.py` were deleted in Fix 2 | **Mismatch 12 (stale):** three references to deleted code. Removed |
+| README proof table | two rows send the reader to `tests/test_snapshot.py` | file deleted | **Mismatch 13 (stale):** rows kept as history, now say the file was deleted; a line above the table says phase rows ran older code |
+| Row A2 | `WriteKillTest.test_put` [write.mid-body]; `FiveCutTest.test_five_cuts` | `tests/test_crash.py`, `tests/test_db.py`; both run: OK | Match |
+| Row A5 | ACK only after `_commit` returns; E5 route; `test_put_killed_after_it_returned`, `ServeTest.test_ack_then_sigkill_by_pid_then_reopen` | `db.py` `_commit`; tests exist | Match |
+| Row C2 | `OpenKillTest.test_kill_during_recovery_twice`, `test_kill_before_trailer_restore` | `tests/test_crash.py`; first one run: OK | Match |
+| Row E1 | refused before any byte; disk-full seed 9901 with 449 refusals | `evidence/torture/run-disk-full-100-seed-9901.txt`: `PASS 100/100`, `SizeCapReached 449` | Match (Phase 7 code, see C3 note) |
+| Row E2 | whole batch sized first; `CapTest.test_e2_batch_over_the_cap` | run: OK | Match |
+| Row E3 | `CapTest.test_e3_cap_reached_then_killed` | `tests/test_compact.py` | Match |
+
+**Summary:** 14 crash points and 16 rows or texts checked; 5 documentation mismatches (9–13), of which one was a missing test (11), now added. No engine code was wrong or changed.

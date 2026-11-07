@@ -27,6 +27,8 @@ Each row is the pause point at that line (row 7 has none). Rows 1–6 and 8–14
 
 `DB._commit` writes the body at E with a `write()` loop, calls `os.fsync`, and only then writes the marker (`CMIT`, body_len, crc32) and the trailer, then `os.fsync` again, then updates the index and returns — serve sends ACK after that. Recovery applies a transaction only if its whole marker is present and matches its body, so a kill before that point leaves bytes that are cut, never half applied; a batch is one transaction. After a process kill the OS keeps every byte a finished `write()` handed it, so an ACKed write is on disk. A failed write is undone with `truncate(E)` + `os.fsync`. Recovery changes the file only with `os.ftruncate` to an absolute offset or by appending `0xEE`, so repeating it gives the same file. Compaction writes a separate file, `os.fsync`s and re-reads it, closes both handles and switches with one `os.replace` (atomic rename) — the original is never deleted first. We `fsync` the directory after the rename: a process kill does not need it, an OS crash would. `open_db` takes `fcntl.flock` on `<path>.lock` before recovery, so no second process can cut a write in progress.
 
+**E5, the second commit route:** a write that does not fit under `max_bytes` is never appended. `DB._commit_by_compaction` writes a compacted file that already contains it, and the one `os.replace` is its commit point: before it, the old file and no write; after it, the new file with the write. If the folder fsync or the reopen fails after the swap, the database is marked failed and the caller gets `DatabaseFailed` although the write is on disk — allowed, because no success was returned (`tests/test_compact.py` `E5FailureAfterSwapTest`, injected errors only).
+
 ## 3. Known weaknesses
 
 1. **No power-loss claim:** plain `os.fsync` on macOS does not make the drive store data in order (`evidence/fsync-macos.txt`); `F_FULLFSYNC` is not used.
@@ -34,17 +36,16 @@ Each row is the pause point at that line (row 7 has none). Rows 1–6 and 8–14
 3. **Our tests cannot see a missing fsync:** it is the one planted bug that survives (`evidence/engine-mutation-check-phase7.txt`).
 4. **Compaction stops the world,** and under a tight `--max-bytes` E5 may compact on nearly every write; compaction of 1,000,000 live keys is NOT measured.
 5. **Platform and margins:** only macOS and Linux are supported — elsewhere `open` refuses with `UnsupportedPlatform`; only macOS was tested; `check` takes no lock.
-6. **Torture time:** 200 default iterations take **126.2 s** after Fix 5 (181.1 s before) — inside the judge's ~180 s but not our 120 s target; modes that grow their file now start a fresh database every N iterations (N printed, `--fresh-every`), so a run no longer accumulates one long history (`evidence/fix5-torture-timing.md`).
+6. **Torture time:** 200 default iterations take **126.2 s** (181.1 s before Fix 5): inside the judge's ~180 s, not our 120 s target. Growing modes start a fresh database every N iterations (`--fresh-every`; `evidence/fix5-torture-timing.md`).
 
 ## 4. What we tried that failed
 
-1. **Recovery took 4.857 s for 1,000,000 keys.** Found by the Phase 3 timing (`29b5984`) and `torture --mode scale`. A fast path in `recovery.scan` brought it to 2.889 s and an index cache to 1.253 s (`3f54581`, `293d216`); the cache was removed again in the final fix round (one data file), so single puts now take 2.423 s.
+1. **Recovery took 4.857 s for 1,000,000 keys** (Phase 3 timing, `29b5984`). A fast path in `recovery.scan` made it 2.889 s, an index cache 1.253 s (`3f54581`, `293d216`); the cache was removed in the final fix round (one data file): 2.423 s.
 2. **A second open could cut a write in progress.** Found by reading `recovery.recover` (written down in `5683dc4`), reproduced against a lock-free copy: 14 bytes cut (`evidence/weakness4-without-lock.txt`). Fixed by the `flock` lock (`293d216`).
-3. **The tester crashed instead of failing** on a fake engine. Found by the fake-engine proof (`2ded156`, run 1 kept). Fixed in the first committed tester (`6111eb5`).
-4. **Tests that could not see bugs,** found by planting each bug in a copy: trusting a length (`1466f12`), a skipped snapshot CRC (`3f54581`), a cap off-by-one and a stale snapshot hidden by E5 (`a2007f3`). Each now has a stronger test.
-5. **The judge's 200-iteration run took 355.8 s** (`b1513cb`), 152.2 s with the later-removed cache, and 181.1 s in the clean clone; Fix 5 (fresh database every N iterations, check and dump together, a lazy import) made it 126.2 s, kills unchanged.
-6. **Our tooling failed twice:** the mutation check hung (it did not copy `kvdb.py`; a test spun on EOF) and one set of runs never started (a shell word-splitting bug). Fixed in `a2007f3` (test) and `504f994` (tools); the runs were redone.
-
+3. **The tester crashed instead of failing** on a fake engine (`2ded156`, run kept). Fixed in `6111eb5`.
+4. **Tests that could not see bugs,** found by planting bugs in a copy: a trusted length (`1466f12`), a skipped CRC in the removed cache, a cap off-by-one (`3f54581`, `a2007f3`). Each now has a stronger test.
+5. **The judge's 200-iteration run took 355.8 s** (`b1513cb`), later 181.1 s; Fix 5 made it 126.2 s with the kills unchanged.
+6. **Our tooling failed twice:** the mutation check hung (a test spun on EOF) and one set of runs never started (shell word splitting). Fixed in `a2007f3`, `504f994`; runs redone.
 7. **Found by an independent audit (2026-11-07)** and reproduced by us before fixing (`evidence/tester-hardening.txt`): the tester gave PASS 5/5 to an engine that never answers and to one that prints garbage, and an `ERR` with a bad request id crashed its threads; `serve` itself crashed on a 5,000-digit batch count. Fixed with strict reply parsing, a coverage verdict (INCONCLUSIVE, exit 3) and length checks before `int()`. Further audit findings: `docs/breaking-long-form.md`.
 
 ## 5. If we had 24 more hours

@@ -200,6 +200,8 @@ ERR <id> <reason>     nothing was changed
 
 **Proof that it catches bugs** (real runs, in `evidence/torture/`):
 
+Rows that name a phase are history: they ran the code of that phase (several with the index cache that the final fix round removed). Runs on the final code are in the final-check evidence.
+
 | Engine | Result | File |
 |---|---|---|
 | `tester/fake_kvdb.py`: ACKs everything, stores nothing | FAIL at iteration 1, names ACKed ids such as `w1-734` | `proof-fake-serve.txt` |
@@ -216,8 +218,8 @@ ERR <id> <reason>     nothing was changed
 | Phase 7, `disk-full`, seed 9901 | PASS 100/100; **449 clean `SizeCapReached` refusals**, file never over 4,096 bytes; 60.7 s | `run-disk-full-100-seed-9901.txt` |
 | Phase 7, `overlap`, seed 5501 | PASS 100/100 (3 writers, 8 shared keys); 70.7 s | `run-overlap-100-seed-5501.txt` |
 | Phase 7, `large-values` / `large-batches`, seeds 9902 / 4202 | PASS 20/20 each | `run-large-values-20-seed-9902.txt`, `run-large-batches-20-seed-4202.txt` |
-| Phase 7, `targeted`, seed 3131 (TARGETED) | PASS 51/51 = 17 pause points × 3 rounds, now including the 4 `compact.*` points; `snapshot.*` are hard-killed in `tests/test_snapshot.py` instead | `run-targeted-3-seed-3131.txt` |
-| the real engine after Phase 6, `--mode targeted`, seed 626262 (TARGETED) | PASS 26/26; `compact.*` and `snapshot.*` NOT TESTED here (snapshot kills are in `tests/test_snapshot.py`) | `run-targeted-2-seed-626262.txt` |
+| Phase 7, `targeted`, seed 3131 (TARGETED) | PASS 51/51 = 17 pause points × 3 rounds, now including the 4 `compact.*` points; `snapshot.*` were then hard-killed in `tests/test_snapshot.py` (deleted with the cache in the final fix round) | `run-targeted-3-seed-3131.txt` |
+| the real engine after Phase 6, `--mode targeted`, seed 626262 (TARGETED) | PASS 26/26; `compact.*` and `snapshot.*` NOT TESTED here (snapshot kills were in `tests/test_snapshot.py`, deleted with the cache) | `run-targeted-2-seed-626262.txt` |
 | the real engine, `--mode large-values`, seed 999111 | PASS 10/10 | `run-large-values-10-seed-999111.txt` |
 | the real engine, `--mode large-batches`, seed 424299 | PASS 10/10; 23 batches of 1,000–10,000 ops in flight at a kill, none partly present | `run-large-batches-10-seed-424299.txt`, `in-flight-analysis.txt` |
 | the real engine, `--mode targeted`, seed 515151 (TARGETED, not random) | PASS 39/39 = 13 pause points × 3 rounds; the 4 `compact.*` points NOT TESTED | `run-targeted-3-seed-515151.txt` |
@@ -367,9 +369,11 @@ A kill before step 7 leaves the original complete (open deletes the temporary fi
 | `CompactionFailed` | compaction stopped before its swap: a write error such as a full disk, the new file failed its check, or the result would exceed `max_bytes` | no — the temporary file is deleted, the database stays usable |
 | `UnsupportedPlatform` | the platform has no OS lock we support (`fcntl.flock`, macOS and Linux) — open refuses rather than run unprotected (final fix round) | no — nothing is created or read |
 | `DatabaseBusy` | another open (another process, or the same process) already has the database: it holds `<path>.lock` | no |
-| `DatabaseFailed` | a write failed **and** the rollback truncate or its fsync also failed; every later write is refused until reopen. Also raised for any operation on a closed database | the failed write may remain as a torn tail (the next open cuts it) or — only if the second fsync failed — as a complete transaction that the next open applies; see below |
+| `DatabaseFailed` | a write failed **and** the rollback truncate or its fsync also failed; or a compaction failed AFTER it closed the handles (section 11 steps 6–9: the swap, the folder fsync or the reopen); every later write is refused until reopen. Also raised for any operation on a closed database | the failed write may remain as a torn tail (the next open cuts it) or — only if the second fsync failed — as a complete transaction that the next open applies. After a compaction failure the file is the old one or the new one, whole. **On the E5 path the new file already contains the write:** if `os.replace` succeeded and the folder fsync or the reopen then failed, the caller gets `DatabaseFailed` although the change IS on disk and the next open shows it; see below |
 
 **What a failed write leaves behind.** The marker is written only after the body's fsync succeeded (CLAUDE.md section 9, steps 4–5). If a write or the first fsync failed, there is no complete marker: the tail is torn, and the rollback (`truncate` to E, `fsync`) or the next open removes it. If only the second fsync failed, the marker is already complete: the rollback truncate removes it; if that truncate also fails (DatabaseFailed), or the process is killed before it runs, the transaction is complete on disk and the next open applies it even though the caller got an error. That is allowed by rule 2 of the invariant: an operation that did not return success may be fully present.
+
+**The same on the E5 path** (`src/kv/db.py` `DB._commit_by_compaction` → `_compact_locked`). A write that does not fit under `max_bytes` is committed by a compaction that includes it, and its commit point is the `os.replace` (step 7). Before it, the original file is untouched and the write is absent. After it, the write is present. If anything after the swap fails (the folder `fsync`, reopening the handles, or the size check), the database is marked failed and the caller gets `DatabaseFailed`, but the write is already in the file and the next open applies it. Allowed by rule 2: no success was returned. The torture oracle treats a `DatabaseFailed` reply as "present or absent" for this reason (`tester/oracle.py`). Tested with injected errors only (`tests/test_compact.py` `E5FailureAfterSwapTest`): a failing folder fsync after the swap gives `DatabaseFailed`, a reopened file that passes `check` and HAS the write; a failing `os.replace` gives `DatabaseFailed` and the original file byte for byte, without the write. A real disk error at that moment was NOT TESTED.
 
 ## Platform notes
 
@@ -401,6 +405,21 @@ Measured on our demo laptop (CLAUDE.md section 5, `evidence/platform-probe.txt`,
 | 100 batches of 10,000 puts | 27,002,016 bytes | **1.354 s** | met |
 
 The rows above with a snapshot are history: they measured the index cache that was removed. A compacted file is always written in batches, so a database opens like the second row after `./kvdb compact`. A durable single put takes 0.389 ms on average (`tools/sync_speed.py`).
+
+**Recovery in every crash state** (final fix round, Fix 4c; `python3 tools/recovery_worst_case.py 5`, `evidence/recovery-worst-case.txt`, captured 2026-11-07 07:05 IST). 1,000,000 base keys; each case is a copy of the base file put into one crash state; worst of 5 timed starts of `serve` until `READY`:
+
+| Crash state | Worst | Under 2 s? |
+|---|---|---|
+| healthy, single puts | 2.469 s | **no** |
+| F4: 1-byte cut, single puts | 2.412 s | **no** |
+| kill at `compact.before-swap`, original = single puts | 2.542 s | **no** |
+| B6: half a 10,000-op batch after single puts | 2.481 s | **no** |
+| healthy, batched | 1.349 s | yes |
+| B6: half a 10,000-op batch after batches | 1.438 s | yes |
+| batched + a tail of 100 × 1 MB values | 1.452 s | yes |
+| batched + a tail of 20 batches of 10,000 ops | 1.596 s | yes |
+
+Every state built on 1,000,000 single-put transactions misses F3 (2 s); every state built on batches meets it. Cold cache (right after a reboot) was NOT measured.
 
 **Shrink test** (`evidence/shrink-test.txt`, `python3 tools/shrink_test.py`; written in batches of 10,000 operations through the engine API, not single puts): after 1,000,000 puts the file was 27,002,016 bytes; after 1,000,000 deletes 44,004,016 bytes and 0 keys; after `compact` **16 bytes** (just the header). `check` said OK, the reopened database was empty, and a new put worked.
 
