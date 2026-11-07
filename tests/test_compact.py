@@ -4,7 +4,7 @@ import random
 import re
 import unittest
 
-from src.kv import CompactionFailed, SizeCapReached, check, open_db, recovery, snapshot
+from src.kv import CompactionFailed, SizeCapReached, check, open_db, recovery
 from tests.kvtest_util import WorkDir, read_bytes, write_bytes
 from tests.test_crash import kill_at
 
@@ -12,9 +12,8 @@ TMP = recovery.COMPACT_TMP_SUFFIX
 
 
 def fill(path, n=300, rounds=4, max_bytes=0):
-    """n keys, each overwritten `rounds` times (so there is garbage to remove), with
-    index snapshots on (every 100 transactions), so <path>.idx exists afterwards."""
-    db, _ = open_db(path, max_bytes=max_bytes, snapshot_every=100)
+    """n keys, each overwritten `rounds` times (so there is garbage to remove)."""
+    db, _ = open_db(path, max_bytes=max_bytes)
     for r in range(rounds):
         for i in range(n):
             db.put(b"k%04d" % i, b"r%d-%d" % (r, i))
@@ -71,7 +70,7 @@ class CompactTest(unittest.TestCase):
                 db.put(k, v)
             db.compact()
             db.close()
-            scan, index, _ = recovery.read_index(path)            # the file itself, no snapshot
+            scan, index, _ = recovery.read_index(path)            # the file itself
             self.assertEqual(scan.kind, recovery.CLEAN)
             self.assertEqual(scan.transactions, 2)                 # 64 MiB limit: 64 values, then 6
             with open_db(path)[0] as db:
@@ -87,13 +86,11 @@ class CompactKillTest(unittest.TestCase):
                 path = w.path("db.kv")
                 state = fill(path)
                 original = read_bytes(path)
-                self.assertTrue(os.path.exists(snapshot.path_for(path)))      # a snapshot exists before
                 kill_at(path, "compact", point)
                 swapped = point in ("compact.after-swap", "compact.before-cleanup")
                 self.assertEqual(os.path.exists(path + TMP), not swapped)   # temp file until the swap
                 if swapped:
                     self.assertLess(os.path.getsize(path), len(original))       # the new file is in place
-                    self.assertFalse(os.path.exists(snapshot.path_for(path)))  # step 5 ran before the swap
                 else:
                     self.assertEqual(read_bytes(path), original)               # old file untouched (C3)
                 self.assertEqual(state_of(path), state)                         # all data intact either way

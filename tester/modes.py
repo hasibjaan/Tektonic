@@ -26,7 +26,6 @@ PAUSE_POINTS = [                                        # CLAUDE.md section 13, 
     "write.after-marker", "write.after-commit-sync", "write.after-index",
     "recovery.replay", "recovery.before-cut", "recovery.after-cut", "recovery.before-trailer",
     "compact.mid-write", "compact.before-swap", "compact.after-swap", "compact.before-cleanup",
-    "snapshot.before-swap", "snapshot.after-swap",
     "close",
 ]
 TIMEOUT = 120
@@ -487,10 +486,6 @@ def run_targeted(args):
     master = random.Random(args.seed)
     for rnd in range(1, args.iterations + 1):
         for point in PAUSE_POINTS:
-            if point.startswith("snapshot."):
-                results.append((rnd, point, "NOT TESTED",
-                                "needs 10,000+ transactions; hard-killed in tests/test_snapshot.py instead"))
-                continue
             outcome, detail = targeted_one(run, profile, point, random.Random(master.getrandbits(64)), rnd)
             results.append((rnd, point, outcome, detail))
             print("round {} {:<26} {:<10} {}".format(rnd, point, outcome, detail))

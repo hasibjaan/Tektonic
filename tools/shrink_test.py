@@ -47,7 +47,7 @@ def main():
     print("time: writes {:.1f} s, compaction {:.2f} s".format(t1 - t0, t2 - t1))
     print("check after compaction:", check(path))
     db, report = open_db(path)
-    print("reopen: keys={} snapshot={}".format(report.keys, report.snapshot))
+    print("reopen: keys={}".format(report.keys))
     db.put(b"new", b"1")
     db.close()
     db, _ = open_db(path)

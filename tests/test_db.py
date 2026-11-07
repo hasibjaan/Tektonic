@@ -288,6 +288,26 @@ class OpenTest(unittest.TestCase):
             self.assertEqual(len(once), three)
 
 
+class OneDataFileTest(unittest.TestCase):
+    """Final fix round, Fix 2 (team decision A): the index cache <path>.idx was removed, so the
+    authoritative state lives in exactly one data file. A cache left by the older version is
+    deleted at open and never used — even one that belongs to a different database."""
+
+    def test_leftover_index_cache_is_deleted_and_not_used(self):
+        with WorkDir() as w:
+            path, other = w.path("db.kv"), w.path("other.kv")
+            with opened(path) as db:
+                db.put(b"a", b"1")
+            write_bytes(path + ".idx", b"KVIX" + b"\0" * 60)          # a stale/foreign cache
+            write_bytes(path + ".idx.tmp", b"half a cache")
+            with opened(path) as db:
+                self.assertEqual({k: db.get(k) for k in db.keys()}, {b"a": b"1"})
+            self.assertFalse(os.path.exists(path + ".idx"))
+            self.assertFalse(os.path.exists(path + ".idx.tmp"))
+            files = sorted(os.listdir(w.dir))
+            self.assertEqual(files, ["db.kv", "db.kv.lock"])            # one data file + the lock
+
+
 class CapTest(unittest.TestCase):
     def test_put_and_batch_over_the_cap_change_nothing(self):             # E1, E2 (no crash)
         with WorkDir() as w:

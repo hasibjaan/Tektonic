@@ -1,0 +1,21 @@
+# Fix 2 measurement: open time WITHOUT the index snapshot, on the demo laptop (i5-8259U, 8 GB, SSD/APFS)
+# Command: python3 tools/no_cache_timing.py 5
+# Load average before: 3.49 3.06 2.80
+
+captured 2026-11-07 06:41:01 IST | macOS-15.8.1-x86_64-i386-64bit-Mach-O | Python 3.13.9
+single: 47,000,016 bytes
+  run 1: serve start -> READY 2.423 s   (READY keys=1000000 recovery_ms=2314 bytes_cut=0 trailer_restored=no snapshot=no)
+  run 2: serve start -> READY 2.389 s   (READY keys=1000000 recovery_ms=2296 bytes_cut=0 trailer_restored=no snapshot=no)
+  run 3: serve start -> READY 2.385 s   (READY keys=1000000 recovery_ms=2295 bytes_cut=0 trailer_restored=no snapshot=no)
+  run 4: serve start -> READY 2.372 s   (READY keys=1000000 recovery_ms=2281 bytes_cut=0 trailer_restored=no snapshot=no)
+  run 5: serve start -> READY 2.363 s   (READY keys=1000000 recovery_ms=2271 bytes_cut=0 trailer_restored=no snapshot=no)
+  worst: 2.423 s
+batched: 27,002,016 bytes
+  run 1: serve start -> READY 1.345 s   (READY keys=1000000 recovery_ms=1256 bytes_cut=0 trailer_restored=no snapshot=no)
+  run 2: serve start -> READY 1.326 s   (READY keys=1000000 recovery_ms=1237 bytes_cut=0 trailer_restored=no snapshot=no)
+  run 3: serve start -> READY 1.354 s   (READY keys=1000000 recovery_ms=1264 bytes_cut=0 trailer_restored=no snapshot=no)
+  run 4: serve start -> READY 1.340 s   (READY keys=1000000 recovery_ms=1244 bytes_cut=0 trailer_restored=no snapshot=no)
+  run 5: serve start -> READY 1.323 s   (READY keys=1000000 recovery_ms=1234 bytes_cut=0 trailer_restored=no snapshot=no)
+  worst: 1.354 s
+WORST without the cache: single 2.423 s, batched 1.354 s (limit 2 s)
+exit=0

@@ -44,11 +44,6 @@ def main():
             i += 1
         sys.stderr.write("FULL {}\n".format(i))
         sys.stderr.flush()
-    elif scenario == "snapshot":                  # 60 puts with a snapshot every 50 transactions
-        db.close()
-        db, _ = open_db(path, snapshot_every=50)
-        for i in range(60):
-            db.put(b"s%d" % i, b"v%d" % i)
     elif scenario != "open":
         raise SystemExit("unknown scenario " + scenario)
     sys.stderr.write("DONE\n")

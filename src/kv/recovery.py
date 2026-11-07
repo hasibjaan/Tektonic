@@ -16,7 +16,6 @@ import time
 import zlib
 
 from . import layout
-from . import snapshot
 from .errors import CorruptFile, InvalidInput, NotOurFile
 from .pause import pause
 
@@ -27,10 +26,9 @@ NO_TRAILER = "no-trailer"  # the last transaction is whole but its trailer is cu
 CORRUPT = "corrupt"        # a byte a kill cannot produce: offset = the bad field
 
 Scan = collections.namedtuple("Scan", "kind offset reason transactions")
-Report = collections.namedtuple("Report", "keys seconds bytes_cut trailer_restored created snapshot")
-# snapshot: True if the index came from <path>.idx and only the log after it was replayed
+Report = collections.namedtuple("Report", "keys seconds bytes_cut trailer_restored created")
 Recovered = collections.namedtuple("Recovered", "index end max_bytes report replayed")
-# replayed: how many transactions were read from the log (after the snapshot, if one was used)
+# replayed: how many transactions were read from the log
 
 
 # ---- small helpers on raw file descriptors ---------------------------------
@@ -191,7 +189,7 @@ def _remove_quietly(path):
 
 
 def read_index(path):
-    """Read-only full scan of a whole file, no snapshot (used to validate a
+    """Read-only full scan of a whole file (used to validate a
     compacted file). Returns (scan, index, size); scan.kind is CLEAN for a good file."""
     fd = os.open(path, os.O_RDONLY)
     try:
@@ -242,7 +240,7 @@ def recover(path, max_bytes=0):
     except FileNotFoundError:
         _create(path, max_bytes)                                            # step 1
         return Recovered({}, layout.HEADER_SIZE, max_bytes,
-                         Report(0, time.perf_counter() - started, 0, False, True, False), 0)
+                         Report(0, time.perf_counter() - started, 0, False, True), 0)
     try:
         size = os.fstat(fd).st_size
 
@@ -252,7 +250,7 @@ def recover(path, max_bytes=0):
             _write_at(fd, 0, layout.encode_header(max_bytes))
             os.fsync(fd)
             return Recovered({}, layout.HEADER_SIZE, max_bytes,
-                             Report(0, time.perf_counter() - started, 0, False, True, False), 0)
+                             Report(0, time.perf_counter() - started, 0, False, True), 0)
 
         header = layout.decode_header(_read_all(fd, 0, layout.HEADER_SIZE))  # step 3
         if header.status != layout.OK:
@@ -261,14 +259,11 @@ def recover(path, max_bytes=0):
             raise InvalidInput("the size cap is fixed at creation: this file has max_bytes={}".format(
                 header.max_bytes))
 
-        snapshot.remove_leftover(path)                                     # a killed snapshot write
         _remove_quietly(path + COMPACT_TMP_SUFFIX)                         # a killed compaction: never trusted
-        loaded = snapshot.load(path, size, lambda offset, n: _read_all(fd, offset, n))
-        if loaded.index is not None:                                       # step 4a: start from the snapshot
-            index, start = loaded.index, loaded.covered_end
-        else:                                                              # no usable snapshot: whole log
-            index, start = {}, layout.HEADER_SIZE
-        result = _scan_fd(fd, size, index, on_first=lambda: pause("recovery.replay"), start=start)  # step 4
+        for old in (path + ".idx", path + ".idx.tmp"):                     # an older version's index cache:
+            _remove_quietly(old)                                           # never used, deleted (one data file)
+        index = {}
+        result = _scan_fd(fd, size, index, on_first=lambda: pause("recovery.replay"))  # step 4: the whole log
 
         if result.kind == CORRUPT:                                          # step 5
             raise CorruptFile(result.offset, result.reason)
@@ -287,8 +282,8 @@ def recover(path, max_bytes=0):
             end, restored = size + 1, True
 
         return Recovered(index, end, header.max_bytes,                      # step 8
-                         Report(len(index), time.perf_counter() - started, bytes_cut, restored, False,
-                                loaded.index is not None), result.transactions)
+                         Report(len(index), time.perf_counter() - started, bytes_cut, restored, False),
+                         result.transactions)
     finally:
         os.close(fd)
 

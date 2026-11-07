@@ -40,7 +40,7 @@ Python 3.10 or newer (the import checker uses `sys.stdlib_module_names`). Standa
 - **Printed values** use plain text only when it is unambiguous: visible ASCII, no space, not starting with `hex:`/`file:`, and not the word `NOTFOUND`. Anything else is printed as `hex:`.
 - Every command except `check` runs recovery first, so `get`, `dump` and the others may repair a torn tail, exactly like `open`.
 - **One open at a time.** Every command except `check` first takes an exclusive lock on `<path>.lock` (`fcntl.flock`, macOS and Linux). While `serve` runs, `./kvdb get demo.kv k` prints `ERR DatabaseBusy: …` and exits 3 instead of running recovery under serve's feet (`tests/test_lock.py`). A hard kill releases the lock. `check` takes no lock: it never writes, but if it runs while serve is mid-write it may report that write's bytes as a torn tail.
-- **Files next to a database `<path>`:** `<path>.lock` (the lock, empty), `<path>.idx` (index snapshot, a cache) and, only while one is being written, `<path>.idx.tmp` (snapshot) or `<path>.compact.tmp` (compaction). Open deletes both temporary files; it never uses them.
+- **Files next to a database `<path>`:** only `<path>.lock` (the lock, empty) and, while a compaction runs, `<path>.compact.tmp`, which open deletes and never uses. The authoritative state lives in exactly ONE data file. (Older versions also wrote an index cache `<path>.idx`; it was removed in the final fix round, and open deletes one if it finds it.)
 
 <!-- commands:begin -->
 ```console
@@ -292,34 +292,18 @@ one transaction:
 
 **Index:** in memory only. A dict from key to `(value_offset << 21) | value_length`. Delete removes the key.
 
-**Index snapshot `<path>.idx` (Phase 6)** — a sidecar file, only a cache, so a million keys open quickly. If it is missing, damaged or does not match the log, open ignores it and replays the whole log; the result is the same index either way (`tests/test_snapshot.py`). Written by `src/kv/snapshot.py` `write`, read by `load`. All integers little-endian:
-
-| Offset | Size | Field |
-|---|---|---|
-| 0 | 4 | magic `KVIX` |
-| 4 | 2 | version = 1 |
-| 6 | 2 | flags = 0 |
-| 8 | 8 | covered_end: the log offset E_c the snapshot is valid for |
-| 16 | 8 | n: number of entries |
-| 24 | 8 | total bytes of all keys |
-| 32 | 17 | the 17 log bytes that end at E_c (that transaction's marker and trailer) |
-| 49 | 2n | key lengths (u16) |
-| 49 + 2n | 8n | locations (u64), as in the index |
-| 49 + 10n | … | all keys back to back |
-| end − 4 | 4 | crc32 of everything before it |
-
-It is written after a commit, under the lock, once the transactions since the last snapshot reach max(10,000, keys ÷ 8): to `<path>.idx.tmp`, fsync, then `os.replace` onto `<path>.idx`, then fsync of the folder. A failed snapshot never fails the write. It does not count against `--max-bytes`.
+**No index cache (final fix round).** Phase 6 added a sidecar index cache `<path>.idx` to open a million keys faster. It was removed on 2026-11-07, because the brief allows exactly one data file (plus a lock file and compaction temporary files) and no judge had approved the cache. Open now always replays the log; it deletes a leftover `<path>.idx` or `<path>.idx.tmp` and never uses it (`tests/test_db.py` `OneDataFileTest`). The cost is measured under "Measured results".
 
 ## Recovery algorithm
 
-> Status: frozen in Phase 1 (CLAUDE.md section 10), implemented in `src/kv/recovery.py` `recover`, `scan` and `check` (Phase 3). Tested by `tests/test_db.py` (cuts at every byte, corrupt and foreign files) and by targeted hard kills in `tests/test_crash.py`. Recovery of 1,000,000 keys is under 2 s with the index snapshot — see Measured results.
+> Status: frozen in Phase 1 (CLAUDE.md section 10), implemented in `src/kv/recovery.py` `recover`, `scan` and `check` (Phase 3). Tested by `tests/test_db.py` (cuts at every byte, corrupt and foreign files) and by targeted hard kills in `tests/test_crash.py`. Opening 1,000,000 single-put transactions takes 2.423 s — over the 2 s limit — and 1,000,000 batched keys 1.354 s; see Measured results.
 
 A kill only ever cuts the end of the file — it never writes wrong bytes. So open sorts every problem into one of two kinds. **Torn:** the file ends before a field is complete, so it cut off the tail. **Corrupt:** any other bad byte — something a kill cannot cause.
 
 1. If the file is missing, open creates it: it writes the header and syncs the file and the directory.
 2. If the file is shorter than the 16-byte header and its bytes match the start of a valid header, creation was interrupted, so open writes a fresh header. If they don't match, open refuses: it is not our file.
 3. If the magic is not `KVDB`, or the version is not 1, or the flags are not 0, open refuses and leaves the file exactly as it is.
-4. If `<path>.idx` is valid for this log (correct CRC, and the 17 log bytes at its covered offset E_c are the ones it stored), the index starts as that snapshot and open reads transactions from E_c; otherwise it starts empty and reads from byte 16. (A leftover `<path>.idx.tmp` or `<path>.compact.tmp` from a killed snapshot write or compaction is deleted, never used.) Open reads transactions from there. For each one it checks every length against the limits and against the bytes left in the file. It collects the operations on the side. Only when the commit marker is complete and its body length and checksum match does it apply them to the index, in order. A batch is therefore all or nothing.
+4. Open deletes a leftover `<path>.compact.tmp` (a killed compaction) and any `<path>.idx` / `<path>.idx.tmp` from an older version — it never uses them — and reads the transactions from byte 16.
 5. After each marker it expects the trailer byte `EE`. If the file ends exactly at the marker, the transaction is still valid — only the trailer was lost (for example by a 1-byte cut of the file). Open writes the trailer back and syncs before it accepts any new write.
 6. If the file ends in the middle of a transaction, open cuts the file back to the end of the last complete transaction — an absolute offset, so doing it twice gives the same result — and syncs.
 7. Any other bad byte is corruption. Open refuses and writes nothing, rather than throw away committed transactions that come after it.
@@ -337,18 +321,18 @@ The log only grows, so `compact` rewrites it with only the live keys, under the 
 2. Write `<path>.compact.tmp` in the same folder: a header with the same `max_bytes`, then every live key as ordinary put transactions in batches (at most 10,000 operations and 64 MiB of values each).
 3. `fsync` it and close it.
 4. Read it back with the normal recovery scan: it must be clean, with exactly the live keys and their lengths. Otherwise delete it and raise `CompactionFailed` — nothing changed.
-5. Delete the old snapshot `<path>.idx`.
+5. (Removed in the final fix round: there is no index cache to delete.)
 6. Close both handles.
 7. `os.replace(<path>.compact.tmp, <path>)` — the one atomic switch. The original is never deleted first.
 8. `fsync` the folder.
 9. Reopen both handles; the index now points into the new file.
-10. Write a fresh snapshot.
+10. Release the lock.
 
 A kill before step 7 leaves the original complete (open deletes the temporary file); a kill after it leaves the complete new file. **E5:** when a write does not fit under `--max-bytes`, the engine first checks whether the file compacted *with that write* would fit; if so it compacts with it (step 7 is then the write's commit point), otherwise it refuses with `SizeCapReached` and writes nothing.
 
 ## Limits
 
-> Status: frozen in Phase 1. Key, value and batch limits are enforced by `src/kv/layout.py` `validate_ops` (tested in `tests/test_layout.py`); the size cap by `src/kv/db.py` `DB._commit` (tested in `tests/test_db.py` `CapTest`, no crash). 1,000,000 keys open in about 1 s (Measured results).
+> Status: frozen in Phase 1. Key, value and batch limits are enforced by `src/kv/layout.py` `validate_ops` (tested in `tests/test_layout.py`); the size cap by `src/kv/db.py` `DB._commit` (tested in `tests/test_db.py` `CapTest`, no crash). 1,000,000 keys open in 1.354 s when written in batches and 2.423 s as single puts (Measured results).
 
 | Item | Limit |
 |---|---|
@@ -383,7 +367,7 @@ Measured on our demo laptop (CLAUDE.md section 5, `evidence/platform-probe.txt`,
 
 - macOS 15.8.1 (x86_64), Python 3.13.9 as `python3`; `python` and `py` do not exist there. Internal SSD, APFS.
 - Hard kill: `kill -9 <pid>` (exit status 137) and `Popen.kill()` (return code −9). Ctrl+C is not a crash test.
-- `fsync` of a directory after `os.replace` works; we do it after every compaction and snapshot swap.
+- `fsync` of a directory after `os.replace` works; we do it after every compaction swap.
 - `os.replace` onto a file that is still open works, but a handle opened before the swap keeps reading the OLD file — so compaction closes both handles before the swap and reopens them after.
 - `os.fsync` on macOS moves data to the drive but does not make the drive store it in order (`man 2 fsync`); `F_FULLFSYNC` would. We claim process death only.
 - **Supported platforms: macOS and Linux** (`fcntl.flock`). On a platform without it — e.g. Windows — `open` raises `UnsupportedPlatform` instead of running without a lock, because two unlocked opens of one file were shown to lose an acknowledged write (`tests/test_lock.py` `AuditReproductionTest`). Only macOS was tested.
@@ -397,9 +381,16 @@ Measured on our demo laptop (CLAUDE.md section 5, `evidence/platform-probe.txt`,
 | Phase 3 code | 4.857 s | 4.814 s |
 | Phase 6 fast path, no snapshot | 2.889 s | 2.354 s |
 | fast path + snapshot every keys ÷ 4 | 1.070 s (worst case 1.582 s) | 0.987 s |
-| **current: fast path + snapshot every keys ÷ 8** | **1.253 s** (worst case **1.127 s**, snapshot 125,000 transactions old) | 1.073 s |
+| fast path + snapshot every keys ÷ 8 (removed again in the final fix round) | 1.253 s (worst case 1.127 s) | 1.073 s |
 
-**The 2-second limit (F3, B6) is met on this laptop**, every run under 1.3 s (`evidence/recovery-benchmark-keys8.txt`). A durable single put takes 0.389 ms on average (`tools/sync_speed.py`).
+**Current code (final fix round, no index cache)** — `python3 tools/no_cache_timing.py 5`, worst of 5 opens, files built directly with `src/kv/layout.py` (`evidence/no-cache-timing.txt`):
+
+| 1,000,000 keys written as | File size | Worst open | 2 s limit (F3) |
+|---|---|---|---|
+| single-put transactions | 47,000,016 bytes | **2.423 s** | **NOT met** |
+| 100 batches of 10,000 puts | 27,002,016 bytes | **1.354 s** | met |
+
+The rows above with a snapshot are history: they measured the index cache that was removed. A compacted file is always written in batches, so a database opens like the second row after `./kvdb compact`. A durable single put takes 0.389 ms on average (`tools/sync_speed.py`).
 
 **Shrink test** (`evidence/shrink-test.txt`, `python3 tools/shrink_test.py`; written in batches of 10,000 operations through the engine API, not single puts): after 1,000,000 puts the file was 27,002,016 bytes; after 1,000,000 deletes 44,004,016 bytes and 0 keys; after `compact` **16 bytes** (just the header). `check` said OK, the reopened database was empty, and a new put worked.
 

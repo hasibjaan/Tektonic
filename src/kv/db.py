@@ -15,7 +15,6 @@ except ImportError:                   # Windows: no fcntl -> open_db refuses (Un
 
 from . import layout
 from . import recovery
-from . import snapshot
 from .errors import (CompactionFailed, DatabaseBusy, DatabaseFailed, InvalidInput, SizeCapReached,
                      UnsupportedPlatform)
 from .pause import pause
@@ -23,23 +22,19 @@ from .pause import pause
 PUT = layout.OP_PUT
 DELETE = layout.OP_DELETE
 _OP_NAMES = {PUT: PUT, DELETE: DELETE, "put": PUT, "del": DELETE, "delete": DELETE}
-SNAPSHOT_MIN = 10_000      # take an index snapshot after max(SNAPSHOT_MIN, keys // SNAPSHOT_DIVISOR) transactions
-SNAPSHOT_DIVISOR = 8       # Phase 6 re-measure: was 4
 COMPACT_BATCH_OPS = 10_000             # compaction writes live keys as batches of at most
 COMPACT_BATCH_BYTES = 64 * 1024 * 1024  # this many ops and this many value bytes
 
 
-def open_db(path, max_bytes=0, snapshot_every=SNAPSHOT_MIN):
+def open_db(path, max_bytes=0):
     """Open (or create) the database at path. Returns (db, report).
 
-    report is recovery.Report(keys, seconds, bytes_cut, trailer_restored, created, snapshot).
-    snapshot_every: the minimum number of transactions between index snapshots
-    (tests use a small number; 0 turns snapshots off).
+    report is recovery.Report(keys, seconds, bytes_cut, trailer_restored, created).
     """
     lock_fd = _take_lock(path)                   # BEFORE recovery: no other open can cut our writes
     try:
         rec = recovery.recover(path, max_bytes)
-        return DB(path, rec, snapshot_every, lock_fd), rec.report
+        return DB(path, rec, lock_fd), rec.report
     except BaseException:
         _release_lock(lock_fd)
         raise
@@ -71,12 +66,9 @@ def _release_lock(fd):
 
 
 class DB:
-    def __init__(self, path, rec, snapshot_every=SNAPSHOT_MIN, lock_fd=None):
+    def __init__(self, path, rec, lock_fd=None):
         self.path = path
         self._lock_fd = lock_fd
-        self._snapshot_every = snapshot_every
-        self._since_snapshot = rec.replayed      # transactions in the log that no snapshot covers yet
-        self.snapshot_error = None               # last snapshot failure (the data itself is never affected)
         self.compact_listener = None             # optional callable("begin" | "end"), used by serve
         self._lock = threading.Lock()
         self._index = rec.index
@@ -205,10 +197,6 @@ class DB:
             self._apply(clean, start)                                 # 7. apply to the dict in list order
             self._end = start + size
             pause("write.after-index")
-            self._since_snapshot += 1
-            if self._snapshot_every and self._since_snapshot >= max(self._snapshot_every,
-                                                                     len(self._index) // SNAPSHOT_DIVISOR):
-                self._snapshot(layout.encode_commit(body_len, crc))
         # 8. the lock is released; returning is the success the caller (serve) ACKs
 
     # ---- compaction (CLAUDE.md section 11) ----------------------------------------
@@ -287,7 +275,7 @@ class DB:
                 raise
             raise CompactionFailed("compaction stopped before the swap: {!r}".format(exc)) from exc
         try:
-            snapshot.remove(self.path)                                        # 5. old offsets: gone
+            # 5. (removed in the final fix round: there is no index snapshot to delete)
             self._w.close()                                                   # 6. close BOTH handles
             self._r.close()
             pause("compact.before-swap")
@@ -301,31 +289,13 @@ class DB:
                 raise DatabaseFailed("file is {} bytes after the swap, expected {}".format(actual, size))
             self._index = new_index
             self._end = size
-            self._since_snapshot = 0
             pause("compact.before-cleanup")
         except BaseException as exc:
             self._failed = "compaction failed after it closed the handles: {!r}".format(exc)
             self._broken = True
             self._notify("end")
             raise DatabaseFailed(self._failed) from exc
-        if self._snapshot_every and self._index:                              # 10. cleanup: fresh snapshot
-            self._snapshot(self._read_at(self._end - snapshot.TAIL_SIZE, snapshot.TAIL_SIZE))
-        self._notify("end")
-
-    def _snapshot(self, log_tail):
-        """After a COMMITTED transaction: save the index to <path>.idx (a cache).
-
-        Runs under the lock, after step 7, so the index matches the log up to
-        self._end exactly. A failure here never fails the write: the
-        transaction is already durable; the snapshot is only a shortcut.
-        """
-        try:
-            snapshot.write(self.path, self._index, self._end, log_tail)
-            self.snapshot_error = None
-        except OSError as exc:
-            self.snapshot_error = repr(exc)
-            snapshot.remove_leftover(self.path)
-        self._since_snapshot = 0
+        self._notify("end")                                                   # 10. release the lock (caller)
 
     def _apply(self, clean, start):
         position = start + layout.TXN_HEADER.size

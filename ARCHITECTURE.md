@@ -2,10 +2,10 @@
 
 ## Part 1 — Diagram
 
-Final diagram (Phase 8). Source: [diagrams/architecture.mmd](diagrams/architecture.mmd); the same source is below so GitHub draws it. It shows every component with its file and function, the byte layout with sizes, the numbered write order, the recovery flow (including a half-done compaction or snapshot), the compaction flow and both locks. Rendering was **not checked on our laptop** (no Mermaid tool installed, and we work offline); no exported image exists.
+Final diagram (final fix round: the index cache is gone, and the E5 route is shown). Source: [diagrams/architecture.mmd](diagrams/architecture.mmd); the same source is below so GitHub draws it. It shows every component with its file and function, the byte layout with sizes, the numbered write order, the recovery flow (including a half-done compaction or snapshot), the compaction flow and both locks. Rendering was **not checked on our laptop** (no Mermaid tool installed, and we work offline); no exported image exists.
 
 ```mermaid
-%% Architecture of the crash-safe key-value store — FINAL (Phase 8). Mermaid source.
+%% Architecture of the crash-safe key-value store — final fix round (index cache removed, E5 route shown). Mermaid source.
 %% Every box names the file and function that implements it.
 flowchart TD
 
@@ -23,16 +23,14 @@ flowchart TD
     LAYOUT["layout.py: encode_body, encode_commit, decode_txn"]
     IDX[("In-memory index: dict key to offset shl 21 or length")]
     REC["recovery.py: recover, scan (fast path + decode_txn); check is read-only"]
-    SNAP["snapshot.py: index snapshot path.idx (a cache)"]
     COMP["DB.compact / _compact_locked: section 11"]
     PAUSE["pause.py: KVDB_PAUSE_AT pause points"]
   end
 
   subgraph FILES["Files next to the database"]
-    DATA[("path: the log")]
-    IDXF[("path.idx: snapshot")]
+    DATA[("path: the log, the ONLY data file")]
     LOCKF[("path.lock: empty")]
-    TMPS[("path.compact.tmp / path.idx.tmp: temporary, deleted at open")]
+    TMPS[("path.compact.tmp: temporary, deleted at open")]
   end
 
   CLI --> OPEN
@@ -43,17 +41,15 @@ flowchart TD
   CLI --> GLOCK
   GLOCK --> GUARD --> WP --> LAYOUT
   WP -- "write handle r+b, unbuffered" --> DATA
-  WP -- "after commit, every max(10000, keys/8) txns" --> SNAP --> IDXF
   GLOCK -- "get: read handle rb, unbuffered" --> IDX
-  REC -- "load if it matches the log" --> IDXF
-  REC -- "scan from E_c or 16" --> DATA
+  REC -- "scan from 16" --> DATA
   REC -- rebuilds --> IDX
   GLOCK --> COMP --> TMPS
+  GUARD -- "E5: the write does not fit, compact WITH it; os.replace = its commit point" --> COMP
   COMP -- "os.replace" --> DATA
   PAUSE -.-> WP
   PAUSE -.-> REC
   PAUSE -.-> COMP
-  PAUSE -.-> SNAP
 
   subgraph LAYOUTBOX["On-disk layout, little-endian, sizes in bytes"]
     L0["File header 16: magic KVDB 4, version 2 = 1, flags 2 = 0, max_bytes 8"]
@@ -90,15 +86,13 @@ flowchart TD
     R2F["fresh header, fsync"]
     R3{"magic, version, flags OK?"}
     RNO["refuse: NotOurFile, untouched"]
-    RT0["delete path.compact.tmp and path.idx.tmp: half-done compaction or snapshot"]
-    RS{"path.idx valid for this log?"}
-    RSY["index = snapshot, scan from E_c"]
+    RT0["delete path.compact.tmp (half-done compaction) and an old path.idx: never used"]
     RSN["index empty, scan from 16"]
     R5{"how did the scan end?"}
     RT["TORN: ftruncate to absolute offset, fsync"]
     RM["TRAILER MISSING: write 0xEE, fsync"]
     RC["CORRUPT: refuse, untouched"]
-    RR["ready: keys, ms, bytes cut, trailer restored, snapshot"]
+    RR["ready: keys, ms, bytes cut, trailer restored"]
     R0 --> R1
     R1 -- no --> R1N --> RR
     R1 -- yes --> R2
@@ -107,9 +101,7 @@ flowchart TD
     R2S -- no --> RNO
     R2 -- yes --> R3
     R3 -- no --> RNO
-    R3 -- yes --> RT0 --> RS
-    RS -- yes --> RSY --> R5
-    RS -- no --> RSN --> R5
+    R3 -- yes --> RT0 --> RSN --> R5
     R5 -- clean --> RR
     R5 -- "torn tail" --> RT --> RR
     R5 -- "ends at a marker" --> RM --> RR
@@ -121,12 +113,12 @@ flowchart TD
     C2["2 write live keys to path.compact.tmp as batches, same max_bytes"]
     C3["3 os.fsync, close"]
     C4["4 validate: full read-back scan, else delete temp + CompactionFailed"]
-    C5["5 delete old path.idx"]
+    C5["5 (removed: no index cache)"]
     C6["6 close BOTH handles"]
     C7["7 os.replace temp onto path: the only switch"]
     C8["8 os.fsync the folder"]
     C9["9 reopen handles, index from step 4"]
-    C10["10 write a fresh snapshot, release lock"]
+    C10["10 release the lock"]
     C1 --> C2 --> C3 --> C4 --> C5 --> C6 --> C7 --> C8 --> C9 --> C10
   end
 ```
@@ -151,12 +143,12 @@ Status after Phase 8: "Disk state" refers to the format in README "On-disk forma
 | B3 | Kill after the commit marker is written but before fsync | Either all or none. Never some | Body fsynced; marker and trailer written, second fsync not done. After a process kill the bytes are still in the OS page cache; a short write may leave part of the marker | Complete matching marker: all 10 applied. Incomplete: TORN, none. A transaction is only ever applied whole | src/kv/db.py DB._commit; src/kv/recovery.py recover, scan; src/kv/layout.py decode_txn | tests/test_crash.py WriteKillTest.test_batch_of_ten [write.after-marker]: all 10 |
 | B4 | Kill after the batch returns success | All 10 visible | Body, marker and trailer complete and fsynced | Valid marker, all 10 applied | src/kv/db.py DB._commit; src/kv/recovery.py recover, scan; src/kv/layout.py decode_txn | tests/test_crash.py WriteKillTest.test_batch_of_ten [write.after-commit-sync, write.after-index]: all 10 |
 | B5 | A batch that puts key X and deletes key X in the same batch | Define the ordering in your README and honour it after a crash | One transaction: op put X, then op del X | Ops apply in list order in the write path and in recovery alike; the last op on a key wins, so X is absent. Stated in README | src/kv/db.py DB._apply; src/kv/recovery.py scan (list order) | tests/test_db.py SemanticsTest.test_put_then_delete_in_one_batch (with reopen) |
-| B6 | A batch of 10,000 operations, killed halfway | None visible. Recovery still completes in under 2 seconds | Transaction header with op_count 10,000, about 5,000 ops, no marker | TORN, truncate. Op lengths are walked without reading values; with the index snapshot only the log after it is replayed, so the open took 1.073 s on 1,000,000 keys | src/kv/db.py DB._commit; src/kv/recovery.py recover, scan; src/kv/layout.py decode_txn | None visible: tests/test_crash.py WriteKillTest.test_batch_of_ten_thousand_killed_halfway [write.mid-body] passed. Under 2 s: 1.073 s on 1,000,000 keys with the snapshot (torture --mode scale seed 6003, evidence/recovery-benchmark-keys8.txt); random: torture --mode large-batches seed 424299, 23 batches of 1,000-10,000 ops in flight at a kill, all all-or-nothing (evidence/torture/in-flight-analysis.txt) |
+| B6 | A batch of 10,000 operations, killed halfway | None visible. Recovery still completes in under 2 seconds | Transaction header with op_count 10,000, about 5,000 ops, no marker | TORN, truncate. Op lengths are walked without reading values; then the whole log before it is replayed (no index cache since the final fix round) | src/kv/db.py DB._commit; src/kv/recovery.py recover, scan; src/kv/layout.py decode_txn | None visible: tests/test_crash.py WriteKillTest.test_batch_of_ten_thousand_killed_halfway [write.mid-body] passed; random: torture --mode large-batches seed 424299, 23 batches of 1,000-10,000 ops in flight at a kill, all all-or-nothing (evidence/torture/in-flight-analysis.txt). Under 2 s: NOT MET on top of 1,000,000 single-put transactions (that file alone opens in 2.423 s, evidence/no-cache-timing.txt); B6 itself not re-measured after the cache was removed |
 | C1 | Kill during open() while it is replaying the log | The next open() succeeds and reaches the same correct state | Unchanged: the scan only reads | Recovery writes nothing before the cut or trailer step, so the next open repeats the same scan | src/kv/recovery.py recover, scan; src/kv/layout.py decode_txn | Targeted kill: tests/test_crash.py OpenKillTest.test_kill_during_recovery_twice [recovery.replay]; random: torture --mode recovery-crash seed 4201 PASS 100/100, 216 kills landed during recovery (evidence/torture/run-recovery-crash-100-seed-4201.txt) |
 | C2 | Kill during open() while it is truncating or repairing a torn tail | The next open() succeeds | File still long or already truncated to p; trailer missing or already restored | ftruncate to an absolute offset p is safe to repeat; a missing trailer is detected again and rewritten | src/kv/recovery.py recover (steps 6, 7) | Targeted kill: OpenKillTest.test_kill_during_recovery_twice [recovery.before-cut, recovery.after-cut]; OpenKillTest.test_kill_before_trailer_restore; random: same recovery-crash run (kills during recovery after torn tails) |
-| C3 | Kill during compaction, before the new file replaces the old | Old file is still authoritative, all data intact | Original file complete; <path>.compact.tmp partial (compact.mid-write) or complete and validated (compact.before-swap); old snapshot already deleted at before-swap | Compaction writes a separate temporary file and only os.replace makes it the database; open deletes a leftover temporary file and opens the original | src/kv/db.py DB.compact, _compact_locked (CLAUDE.md section 11); src/kv/recovery.py recover (deletes <path>.compact.tmp) | Targeted kill: tests/test_compact.py CompactKillTest.test_kill_at_every_compaction_pause_point [compact.mid-write, compact.before-swap]: original bytes unchanged, all data intact; test_stale_complete_temp_file_is_never_trusted; torture --mode targeted seed 3131 (compact.* PASS); random: torture --mode compaction seed 7701 PASS 100/100, 80 kills during a compaction |
+| C3 | Kill during compaction, before the new file replaces the old | Old file is still authoritative, all data intact | Original file complete; <path>.compact.tmp partial (compact.mid-write) or complete and validated, with both handles closed (compact.before-swap) | Compaction writes a separate temporary file and only os.replace makes it the database; open deletes a leftover temporary file and opens the original | src/kv/db.py DB.compact, _compact_locked (CLAUDE.md section 11); src/kv/recovery.py recover (deletes <path>.compact.tmp) | Targeted kill: tests/test_compact.py CompactKillTest.test_kill_at_every_compaction_pause_point [compact.mid-write, compact.before-swap]: original bytes unchanged, all data intact; test_stale_complete_temp_file_is_never_trusted; torture --mode targeted seed 3131 (compact.* PASS); random: torture --mode compaction seed 7701 PASS 100/100, 80 kills during a compaction |
 | C4 | Kill during compaction, in the middle of the rename or swap | Exactly one of old or new is authoritative, both are complete, nothing is lost | os.replace (rename) on APFS: the path names either the complete original or the complete compacted file | The temporary file is fsynced, closed and validated by a full read-back scan before os.replace; both handles are closed first; the folder is fsynced after | src/kv/db.py DB.compact, _compact_locked (CLAUDE.md section 11); src/kv/recovery.py recover (deletes <path>.compact.tmp) | Targeted kills on both sides of the swap: CompactKillTest [compact.before-swap, compact.after-swap]; random: torture --mode compaction seed 7701 PASS 100/100. A kill INSIDE the rename itself cannot be targeted from Python: not verified separately |
-| C5 | Kill during compaction, after swap but before cleanup of temporary files | Data intact. Leftover temp files are cleaned up or ignored on the next open() | <path> is the new compacted file; no temporary file; no snapshot (deleted in step 5) | Nothing left to clean except the snapshot, which cleanup rewrites; open deletes any <path>.compact.tmp or <path>.idx.tmp | src/kv/db.py DB.compact, _compact_locked (CLAUDE.md section 11); src/kv/recovery.py recover (deletes <path>.compact.tmp) | Targeted kill: CompactKillTest [compact.after-swap, compact.before-cleanup]: compacted file in place, no .idx, all data intact, writes and reopen work |
+| C5 | Kill during compaction, after swap but before cleanup of temporary files | Data intact. Leftover temp files are cleaned up or ignored on the next open() | <path> is the new compacted file; no temporary file | Nothing is left to clean up after os.replace; open deletes any leftover <path>.compact.tmp (and an <path>.idx from an older version) and never uses it | src/kv/db.py DB.compact, _compact_locked (CLAUDE.md section 11); src/kv/recovery.py recover (deletes <path>.compact.tmp) | Targeted kill: tests/test_compact.py CompactKillTest [compact.after-swap, compact.before-cleanup]: compacted file in place, all data intact, writes and reopen work |
 | C6 | Kill during close() | Same as a kill at any other time. close() is not special | Every committed transaction was already fsynced; close writes nothing | close only closes the handles under the lock. No shutdown record, so a kill in close is like any other kill | src/kv/db.py DB.close | Targeted kill: tests/test_crash.py OpenKillTest.test_kill_during_close [close]: file bytes unchanged |
 | D1 | Two writers putting different keys, killed at random | Every acknowledged put from either writer is present | Transactions of both writers back to back, never interleaved; at most the last one torn | One global lock serialises whole transactions; ACK only after step 6 | src/kv/db.py DB._commit (one global lock); kvdb.py Server | torture default mode, 3 writer threads with separate keys: seed 1717 PASS 200/200 on the current (Phase 7) code; earlier seeds 60606 and 777001 on the Phase 5 code (evidence/torture/) |
 | D2 | Two writers putting the same key, killed at random | The key holds a value that one of the writers actually wrote. Never a mix of two values | Transactions of both writers on the same keys, serialised by the global lock; at most one torn at the end | One global lock: each request is applied whole; the final value of a key is one writer's whole value | src/kv/db.py DB._commit (one global lock) | torture --mode overlap seed 5501 PASS 100/100: 3 writers on 8 shared keys, final value checked against send/ACK order (evidence/torture/run-overlap-100-seed-5501.txt) |
@@ -169,7 +161,7 @@ Status after Phase 8: "Disk state" refers to the format in README "On-disk forma
 | E5 | After deletes free up space, compaction runs, writes succeed again | Database is usable again without manual intervention | A file at the cap; after the write either the old file (write absent) or the compacted file with the write (write present) | E5: a write that does not fit runs compaction WITH that write applied; os.replace is its commit point; if even that does not fit, SizeCapReached | src/kv/db.py DB._commit_by_compaction, _compact_locked | tests/test_compact.py CapTest.test_e5_deletes_free_space_and_writes_succeed_again; torture --mode disk-full seed 9901 (writes keep succeeding after refusals) |
 | F1 | 500 consecutive random kills and restarts | Invariant holds after every single one | Any state from groups A to E | All mechanisms above; shown only by the torture tool | src/kv/db.py DB._commit; src/kv/recovery.py recover, scan | 500 consecutive random kills in ONE run: ./torture --iterations 500 --seed 880011 PASS 500/500 in a clean clone of commit 1ef9754 (Phase 9, 562.6 s, evidence/final/torture-i500-s880011.txt); earlier 200/200 runs: seeds 777001, 909090, 313131, 1717 (evidence/torture/) |
 | F2 | Kill, restart, kill during recovery, restart, kill during recovery again | Invariant holds. Recovery is idempotent | As C1 and C2 | Recovery is idempotent: read-only scan, absolute-offset truncate, trailer restore re-detected | src/kv/recovery.py recover, scan; src/kv/layout.py decode_txn | Targeted: tests/test_crash.py OpenKillTest.test_kill_during_recovery_twice (kill during recovery, restart, kill during recovery again); random: torture --mode recovery-crash seed 4201 PASS 100/100 — 3 restarted serves killed per iteration, 216 of the 300 kills landed during recovery (evidence/torture/run-recovery-crash-100-seed-4201.txt) |
-| F3 | 1,000,000 keys written, process killed, open() called | Recovery completes in under 2 seconds, all acknowledged keys present | 16-byte header, 1,000,000 committed transactions, maybe a torn tail | Index snapshot <path>.idx (CLAUDE.md section 8a) loaded with C-level calls, then only the log after it replayed by the fast path in scan | src/kv/snapshot.py load, write; src/kv/db.py DB._snapshot; src/kv/recovery.py recover, scan | torture --mode scale seed 6003: 1,000,000 keys built through serve, hard kill, slowest of 5 opens 1.253 s, all keys correct; worst case (snapshot 125,000 transactions old) 1.127 s (evidence/recovery-benchmark-keys8.txt, evidence/recovery-benchmark.md) |
+| F3 | 1,000,000 keys written, process killed, open() called | Recovery completes in under 2 seconds, all acknowledged keys present | 16-byte header, 1,000,000 committed transactions, maybe a torn tail | One sequential scan of the whole log with the fast path in recovery.scan (mmap, prebuilt Struct.unpack_from, one crc32 per body); no index cache since the final fix round (one data file) | src/kv/recovery.py recover, scan | NOT MET for single puts: 1,000,000 single-put transactions open in 2.423 s, worst of 5; 1,000,000 keys in batches in 1.354 s (tools/no_cache_timing.py, evidence/no-cache-timing.txt). With the removed index cache it was 1.253 s (evidence/recovery-benchmark-keys8.txt, history) |
 | F4 | Database file truncated by 1 byte at the end by hand (simulates a lost tail) | open() succeeds. At most the last unacknowledged record is lost | All transactions complete; only the last trailer EE missing (or an empty database cut to 15 bytes) | File ends right after a valid marker: the transaction is valid; write EE back and fsync before any new write. A 15-byte header prefix gets a fresh header | src/kv/recovery.py recover (step 7); src/kv/layout.py decode_txn (NO_TRAILER) | tests/test_db.py FiveCutTest.test_five_cuts ['trailer only']; tests/test_crash.py OpenKillTest.test_kill_before_trailer_restore |
 
 ## Part 3 — The three guarantees
@@ -186,4 +178,4 @@ A batch is ONE transaction: one header with its op count, all its operations, th
 
 ### Recoverability: open always succeeds on a file our database produced
 
-A kill can only shorten what is being written, and recovery has a defined action for every shortened state: a missing file gets a header (`os.open` with `O_CREAT|O_EXCL`, `write`, `os.fsync` of the file and the folder); a file shorter than 16 bytes that is a prefix of our header gets a fresh header; a torn tail is cut with `os.ftruncate` to an ABSOLUTE offset and `os.fsync`; a missing final trailer is written back and `os.fsync`ed (`recovery.recover` steps 1–7). Each repair gives the same result if it is interrupted and run again (C1, C2, F2). A half-done compaction or snapshot leaves only a temporary file, which open deletes, because the switch to a new file is a single `os.replace` done after the new file was `os.fsync`ed and validated, and the original is never deleted first (`DB._compact_locked`, `snapshot.write`). Opening is protected by `fcntl.flock` on `<path>.lock`, taken before recovery, so a second process cannot cut a write in progress (`src/kv/db.py` `open_db`). Verified by `tests/test_crash.py` `OpenKillTest`, `tests/test_compact.py` `CompactKillTest`, `tests/test_snapshot.py`, `tests/test_lock.py` and `torture --mode recovery-crash` (100/100, 216 kills during recovery) and `--mode compaction` (100/100, 80 kills during a compaction).
+A kill can only shorten what is being written, and recovery has a defined action for every shortened state: a missing file gets a header (`os.open` with `O_CREAT|O_EXCL`, `write`, `os.fsync` of the file and the folder); a file shorter than 16 bytes that is a prefix of our header gets a fresh header; a torn tail is cut with `os.ftruncate` to an ABSOLUTE offset and `os.fsync`; a missing final trailer is written back and `os.fsync`ed (`recovery.recover` steps 1–7). Each repair gives the same result if it is interrupted and run again (C1, C2, F2). A half-done compaction leaves only a temporary file, which open deletes, because the switch to a new file is a single `os.replace` done after the new file was `os.fsync`ed and validated, and the original is never deleted first (`DB._compact_locked`, `snapshot.write`). Opening is protected by `fcntl.flock` on `<path>.lock`, taken before recovery, so a second process cannot cut a write in progress (`src/kv/db.py` `open_db`). Verified by `tests/test_crash.py` `OpenKillTest`, `tests/test_compact.py` `CompactKillTest`, `tests/test_snapshot.py`, `tests/test_lock.py` and `torture --mode recovery-crash` (100/100, 216 kills during recovery) and `--mode compaction` (100/100, 80 kills during a compaction).

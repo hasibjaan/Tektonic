@@ -1,4 +1,4 @@
-%% Architecture of the crash-safe key-value store — FINAL (Phase 8). Mermaid source.
+%% Architecture of the crash-safe key-value store — final fix round (index cache removed, E5 route shown). Mermaid source.
 %% Every box names the file and function that implements it.
 flowchart TD
 
@@ -16,16 +16,14 @@ flowchart TD
     LAYOUT["layout.py: encode_body, encode_commit, decode_txn"]
     IDX[("In-memory index: dict key to offset shl 21 or length")]
     REC["recovery.py: recover, scan (fast path + decode_txn); check is read-only"]
-    SNAP["snapshot.py: index snapshot path.idx (a cache)"]
     COMP["DB.compact / _compact_locked: section 11"]
     PAUSE["pause.py: KVDB_PAUSE_AT pause points"]
   end
 
   subgraph FILES["Files next to the database"]
-    DATA[("path: the log")]
-    IDXF[("path.idx: snapshot")]
+    DATA[("path: the log, the ONLY data file")]
     LOCKF[("path.lock: empty")]
-    TMPS[("path.compact.tmp / path.idx.tmp: temporary, deleted at open")]
+    TMPS[("path.compact.tmp: temporary, deleted at open")]
   end
 
   CLI --> OPEN
@@ -36,17 +34,15 @@ flowchart TD
   CLI --> GLOCK
   GLOCK --> GUARD --> WP --> LAYOUT
   WP -- "write handle r+b, unbuffered" --> DATA
-  WP -- "after commit, every max(10000, keys/8) txns" --> SNAP --> IDXF
   GLOCK -- "get: read handle rb, unbuffered" --> IDX
-  REC -- "load if it matches the log" --> IDXF
-  REC -- "scan from E_c or 16" --> DATA
+  REC -- "scan from 16" --> DATA
   REC -- rebuilds --> IDX
   GLOCK --> COMP --> TMPS
+  GUARD -- "E5: the write does not fit, compact WITH it; os.replace = its commit point" --> COMP
   COMP -- "os.replace" --> DATA
   PAUSE -.-> WP
   PAUSE -.-> REC
   PAUSE -.-> COMP
-  PAUSE -.-> SNAP
 
   subgraph LAYOUTBOX["On-disk layout, little-endian, sizes in bytes"]
     L0["File header 16: magic KVDB 4, version 2 = 1, flags 2 = 0, max_bytes 8"]
@@ -83,15 +79,13 @@ flowchart TD
     R2F["fresh header, fsync"]
     R3{"magic, version, flags OK?"}
     RNO["refuse: NotOurFile, untouched"]
-    RT0["delete path.compact.tmp and path.idx.tmp: half-done compaction or snapshot"]
-    RS{"path.idx valid for this log?"}
-    RSY["index = snapshot, scan from E_c"]
+    RT0["delete path.compact.tmp (half-done compaction) and an old path.idx: never used"]
     RSN["index empty, scan from 16"]
     R5{"how did the scan end?"}
     RT["TORN: ftruncate to absolute offset, fsync"]
     RM["TRAILER MISSING: write 0xEE, fsync"]
     RC["CORRUPT: refuse, untouched"]
-    RR["ready: keys, ms, bytes cut, trailer restored, snapshot"]
+    RR["ready: keys, ms, bytes cut, trailer restored"]
     R0 --> R1
     R1 -- no --> R1N --> RR
     R1 -- yes --> R2
@@ -100,9 +94,7 @@ flowchart TD
     R2S -- no --> RNO
     R2 -- yes --> R3
     R3 -- no --> RNO
-    R3 -- yes --> RT0 --> RS
-    RS -- yes --> RSY --> R5
-    RS -- no --> RSN --> R5
+    R3 -- yes --> RT0 --> RSN --> R5
     R5 -- clean --> RR
     R5 -- "torn tail" --> RT --> RR
     R5 -- "ends at a marker" --> RM --> RR
@@ -114,11 +106,11 @@ flowchart TD
     C2["2 write live keys to path.compact.tmp as batches, same max_bytes"]
     C3["3 os.fsync, close"]
     C4["4 validate: full read-back scan, else delete temp + CompactionFailed"]
-    C5["5 delete old path.idx"]
+    C5["5 (removed: no index cache)"]
     C6["6 close BOTH handles"]
     C7["7 os.replace temp onto path: the only switch"]
     C8["8 os.fsync the folder"]
     C9["9 reopen handles, index from step 4"]
-    C10["10 write a fresh snapshot, release lock"]
+    C10["10 release the lock"]
     C1 --> C2 --> C3 --> C4 --> C5 --> C6 --> C7 --> C8 --> C9 --> C10
   end

@@ -2,7 +2,7 @@
 
 Usage: python3 tools/mutation_check_engine.py
 For each bug ("mutant"), src/, tests/ and kvdb.py are copied to .torture-work/mutant-*/,
-one line is changed in the copy, and tests.test_db, tests.test_crash and tests.test_snapshot run
+one line is changed in the copy, and tests.test_db, test_crash, test_lock and test_compact run
 there in a fresh process (the crash tests' child processes import the copy too).
 The real source files are never changed.
 
@@ -41,23 +41,13 @@ MUTANTS = [
      "                                and crc == crc32(view[p:end])):", "                                ):", False),
     ("fast path skips the trailer check", "src/kv/recovery.py",
      "if (magic == b\"CMIT\" and body_len == end - p and trailer == 0xEE", "if (magic == b\"CMIT\" and body_len == end - p", False),
-    ("snapshot: skip the 'matches the log' check", "src/kv/snapshot.py",
-     "    if read_log(covered_end - TAIL_SIZE, TAIL_SIZE) != log_tail:", "    if False:", False),
-    ("snapshot: skip the crc32 check", "src/kv/snapshot.py",
-     "    if zlib.crc32(memoryview(data)[:-4]) != struct.unpack_from(\"<I\", data, len(data) - 4)[0]:", "    if False:", False),
-    ("recovery never starts from the snapshot", "src/kv/recovery.py",
-     "            index, start = loaded.index, loaded.covered_end", "            index, start = {}, layout.HEADER_SIZE", False),
-    ("leftover .idx.tmp not removed at open", "src/kv/recovery.py",
-     "        snapshot.remove_leftover(path)                                     # a killed snapshot write", "        pass", False),
     ("no database lock", "src/kv/db.py",
      "        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)", "        pass", False),
     ("compaction deletes the original before the swap", "src/kv/db.py",
-     "            snapshot.remove(self.path)                                        # 5. old offsets: gone",
-     "            snapshot.remove(self.path); os.remove(self.path)", False),
+     "            # 5. (removed in the final fix round: there is no index snapshot to delete)",
+     "            os.remove(self.path)", False),
     ("compaction skips validating the new file", "src/kv/db.py",
      "            if problem:\n                raise CompactionFailed(problem)", "            if False:\n                raise CompactionFailed(problem)", False),
-    ("compaction keeps the old snapshot", "src/kv/db.py",
-     "            snapshot.remove(self.path)                                        # 5. old offsets: gone", "            pass", False),
     ("compacted file loses max_bytes", "src/kv/db.py",
      "_write_fully(f, layout.encode_header(self._max_bytes))", "_write_fully(f, layout.encode_header(0))", False),
     ("E5 refuses instead of compacting", "src/kv/db.py",
@@ -89,7 +79,7 @@ def run_mutant(name, rel, old, new):
         env.pop("KVDB_PAUSE_AT", None)
         try:
             result = subprocess.run([sys.executable, "-m", "unittest", "tests.test_db", "tests.test_crash",
-                                     "tests.test_snapshot", "tests.test_lock", "tests.test_compact"],
+                                     "tests.test_lock", "tests.test_compact"],
                                     cwd=copy, env=env, capture_output=True, text=True, timeout=900)
         except subprocess.TimeoutExpired:
             return True, "TIMEOUT after 900 s (a test hung: counted as caught, but the hang is a test bug)"

@@ -145,28 +145,9 @@ Approved by the team on 2026-11-06 (Part D reference design plus the Phase 1 dec
 
 **Index — in memory only, never on disk:** a dict from key (`bytes`) to one packed integer `(value_offset << 21) | value_length`. 21 bits, because the length can be 1,048,576 = 2²⁰. Delete removes the key. An empty value is present with length 0; a missing key is absent from the dict.
 
-## 8a. Index snapshot `<path>.idx` — APPROVED IN PHASE 6 (step d)
+## 8a. Index snapshot `<path>.idx` — REMOVED IN THE FINAL FIX ROUND
 
-A sidecar file next to the database. It is **only a cache**: the main file's format (section 8) does not change, and if the snapshot is missing, damaged or does not match the log, open ignores it and replays the whole log.
-
-| Offset | Size | Field |
-|---|---|---|
-| 0 | 4 | magic `b"KVIX"` |
-| 4 | 2 | version u16 = 1 |
-| 6 | 2 | flags u16 = 0 |
-| 8 | 8 | covered_end u64 — the log offset E_c the snapshot is valid for (the end of a committed transaction) |
-| 16 | 8 | count u64 — index entries n |
-| 24 | 8 | key_bytes u64 — total bytes of all keys |
-| 32 | 17 | log_tail — the 17 log bytes ending at E_c (that transaction's commit marker and trailer) |
-| 49 | 2n | key lengths, u16 each |
-| 49 + 2n | 8n | locations, u64 each: `(value_offset << 21) \| value_length` |
-| 49 + 10n | key_bytes | all keys back to back |
-| end − 4 | 4 | crc32 u32 of every byte before it |
-
-- **Written** by `src/kv/db.py` `DB._snapshot`, under the lock, after step 7 of a commit, when the transactions since the last snapshot reach max(10,000, number of keys // 8) (`SNAPSHOT_DIVISOR = 8`; it was 4 until the Phase 6 re-measure, team decision). Order: write `<path>.idx.tmp`, flush, fsync, close → `os.replace` onto `<path>.idx` → fsync the folder. A snapshot failure never fails the write.
-- **Used** only if: the CRC matches, magic/version/flags are right, the sizes add up, `16 + 17 <= E_c <= file size`, the 17 log bytes ending at E_c equal `log_tail`, no location points past E_c, and there are no duplicate keys.
-- **Compaction (Phase 7)** must remove `<path>.idx` before its swap.
-- The snapshot does **not** count against `max_bytes` (like the compaction temporary file).
+Phase 6 added a sidecar index cache `<path>.idx`. It was **removed on 2026-11-07** (final fix round, Fix 2, team decision A): the brief allows exactly one data file plus a lock file and compaction temporary files, the cache was not on that list, and no judge had ruled on it. The authoritative state is now in exactly one data file. Open deletes a `<path>.idx` or `<path>.idx.tmp` left by an older version and never uses it. Measured cost (`evidence/no-cache-timing.txt`): opening 1,000,000 single-put transactions takes 2.423 s (over the 2 s limit, F3); 1,000,000 keys written in batches take 1.354 s.
 
 ## 9. Write order — FROZEN IN PHASE 1
 
@@ -210,9 +191,9 @@ on any error in 3–6: truncate to E, os.fsync, raise.
      otherwise → refuse (not our file), untouched
 3. magic ≠ KVDB → refuse (not our file). version ≠ 1 or flags ≠ 0 → refuse. Untouched.
    A non-zero max_bytes from the caller that differs from the header → refuse (invalid input).
-3a. (Phase 6) Remove a leftover <path>.idx.tmp. Load <path>.idx if it is valid for this
-    log (section 8a): the index starts as the snapshot and p = E_c. Otherwise the index
-    starts empty and p = 16.
+3a. Delete a leftover <path>.compact.tmp (section 11) and a <path>.idx / <path>.idx.tmp
+    left by an older version (section 8a); neither is ever used. The index starts
+    empty and p = 16.
 4. Scan from p (mmap, prebuilt Struct.unpack_from, no slicing copies).
    At each transaction start:
      p == file size                              → clean end, stop
@@ -270,7 +251,7 @@ Approved by the team in Phase 7 (2026-11-06). `src/kv/db.py` `DB.compact` holds 
  4. validate: a full read-only scan of it must end CLEAN with exactly the live keys,
     the same value lengths and the expected size — else delete it and raise
     CompactionFailed; the original is untouched
- 5. delete <path>.idx (its offsets point into the old file)
+ 5. (removed in the final fix round: there is no index snapshot any more)
  6. close BOTH live handles
                                                               [compact.before-swap]
  7. os.replace(<path>.compact.tmp, <path>)                    ← the only switch
@@ -278,7 +259,7 @@ Approved by the team in Phase 7 (2026-11-06). `src/kv/db.py` `DB.compact` holds 
  8. fsync the folder
  9. reopen both handles; index = the one from step 4; end = new size (checked with fstat)
                                                               [compact.before-cleanup]
-10. cleanup: write a fresh snapshot of the new index; release the lock
+10. release the lock
 failure in 2–4: delete the temporary file, raise CompactionFailed, database still usable
 failure in 6–9: mark the database failed (writes refused until reopen); the disk holds one
                 complete database, old or new
@@ -302,7 +283,7 @@ failure in 6–9: mark the database failed (writes refused until reopen); the di
 
 If the environment variable `KVDB_PAUSE_AT` equals a pause point's name, the engine writes `PAUSE <name>` to **stderr**, flushes it, and then blocks forever, so the torture tool can hard-kill it at exactly that step. With the variable unset there is no effect.
 
-Names: `create.mid-header` · `write.before-body` · `write.mid-body` · `write.after-body` · `write.after-body-sync` · `write.after-marker` · `write.after-commit-sync` · `write.after-index` · `recovery.replay` · `recovery.before-cut` · `recovery.after-cut` · `recovery.before-trailer` · `compact.mid-write` · `compact.before-swap` · `compact.after-swap` · `compact.before-cleanup` · `snapshot.before-swap` · `snapshot.after-swap` (added in Phase 6) · `close`
+Names: `create.mid-header` · `write.before-body` · `write.mid-body` · `write.after-body` · `write.after-body-sync` · `write.after-marker` · `write.after-commit-sync` · `write.after-index` · `recovery.replay` · `recovery.before-cut` · `recovery.after-cut` · `recovery.before-trailer` · `compact.mid-write` · `compact.before-swap` · `compact.after-swap` · `compact.before-cleanup` · `close`
 
 Every pause point appears in BREAKING.md's crash table with its file and function. Results from targeted runs are always reported separately from random runs.
 
@@ -351,7 +332,7 @@ ERR <id> <reason>     nothing was changed
 
 - stderr carries `PID <n>` at start, `PAUSE <name>` at pause points, and diagnostics — always flushed.
 - `<id>` is any token without spaces, unique per request. The tester uses `w<writer>-<sequence>`.
-- Added in Phase 4 (both owners: read README "serve protocol" and "Commands"): stderr also carries `READY keys=<n> recovery_ms=<n> bytes_cut=<n> trailer_restored=<yes|no>` once recovery is done. Phase 7: serve prints `COMPACT begin` and `COMPACT end` on stderr around every compaction (asked for, or started by E5). Phase 6 appends ` snapshot=<yes|no>` to the READY line (whether the index came from `<path>.idx`). The `open` command's output line does not change. Requests in flight run concurrently, so replies can come back in any order. `dump --hex` prints `hex:<key> hex:<value>` per line. Exit codes: 0 success (also NOTFOUND and check OK), 1 check found a problem, 2 usage error, 3 `ERR`.
+- Added in Phase 4 (both owners: read README "serve protocol" and "Commands"): stderr also carries `READY keys=<n> recovery_ms=<n> bytes_cut=<n> trailer_restored=<yes|no>` once recovery is done. Phase 7: serve prints `COMPACT begin` and `COMPACT end` on stderr around every compaction (asked for, or started by E5). (A ` snapshot=<yes|no>` field added to READY in Phase 6 was removed again with the cache in the final fix round.) Requests in flight run concurrently, so replies can come back in any order. `dump --hex` prints `hex:<key> hex:<value>` per line. Exit codes: 0 success (also NOTFOUND and check OK), 1 check found a problem, 2 usage error, 3 `ERR`.
 - One thread reads complete requests. A `concurrent.futures.ThreadPoolExecutor` with at least two workers calls the engine concurrently. Writes to stdout happen under a lock and are **flushed after every line** — when stdout is a pipe, Python otherwise holds the ACKs back and the tester never sees them.
 
 ## 15. Python traps — check every change against this list
